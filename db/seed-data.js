@@ -1,0 +1,188 @@
+// Seed data for the SQLite backend (NM-A11). Ported verbatim from the
+// in-memory arrays data-service.js used before the backend migration, so the
+// app has the exact same first-run content it always had. Categories stay a
+// static taxonomy (never written to by users), so they are not a table --
+// api.js serves this array directly for GET /api/categories.
+
+const categories = [
+  { id: "Vehicles", label: "Vehicles", featured: true, subtypes: ["Cars", "Motorcycles", "Trucks & Vans", "Boats", "Parts"] },
+  { id: "Real Estate", label: "Real Estate", featured: true, subtypes: ["For Sale", "For Rent", "Land", "Commercial"] },
+  { id: "Electronics", label: "Electronics", featured: false, subtypes: [] },
+  { id: "Phones & Tablets", label: "Phones & Tablets", featured: false, subtypes: [] },
+  { id: "Home & Furniture", label: "Home & Furniture", featured: false, subtypes: [] },
+  { id: "Fashion", label: "Fashion", featured: false, subtypes: [] },
+  { id: "Baby & Kids", label: "Baby & Kids", featured: false, subtypes: [] },
+  { id: "Sports & Outdoor", label: "Sports & Outdoor", featured: false, subtypes: [] },
+  { id: "Jobs", label: "Jobs", featured: false, subtypes: [] },
+  { id: "Services", label: "Services", featured: false, subtypes: [] },
+  { id: "Agriculture & Garden", label: "Agriculture & Garden", featured: false, subtypes: [] },
+  { id: "Free Items", label: "Free Items", featured: false, subtypes: [] }
+];
+
+const MINUTES_AGO = (minutes) => Date.now() - minutes * 60000;
+
+const listings = [
+  {
+    id: "oak-table",
+    title: "Solid oak dining table",
+    category: "Home & Furniture",
+    price: "2 400 kr",
+    locality: "Södermalm",
+    region: "Stockholm",
+    distance: "3.2 km",
+    condition: "Good",
+    posted: "Today",
+    postedAt: MINUTES_AGO(240),
+    freshness: "New today",
+    images: [
+      { css: "linear-gradient(135deg, #b48762, #f2d9b7)", aiGenerated: false },
+      { css: "linear-gradient(135deg, #8a6a4d, #d8bd93)", aiGenerated: false },
+      { css: "linear-gradient(135deg, #c9a877, #f3e3c6)", aiGenerated: false }
+    ],
+    description: "Seats six, light wear on one corner, easy pickup from courtyard entrance.",
+    seller: "Maja",
+    sellerType: "Private seller",
+    trust: "Joined 2021 · Email verified · Usually replies within 2 hours",
+    sponsored: false
+  },
+  {
+    id: "iphone-14",
+    title: "iPhone 14, 128 GB",
+    category: "Phones & Tablets",
+    price: "5 900 kr",
+    locality: "Solna",
+    region: "Stockholm",
+    distance: "6.8 km",
+    condition: "Like new",
+    posted: "1 hour ago",
+    postedAt: MINUTES_AGO(60),
+    freshness: "Fresh",
+    images: [
+      { css: "linear-gradient(135deg, #2f4c66, #b8d3e7)", aiGenerated: false },
+      { css: "linear-gradient(135deg, #1f3347, #6f92ab)", aiGenerated: false }
+    ],
+    description: "Unlocked, battery health 91%, box included. Receipt available for inspection.",
+    seller: "Nordic Refurb",
+    sellerType: "Professional seller",
+    trust: "Verified phone · 143 completed deals · Fast responder",
+    sponsored: true
+  },
+  {
+    id: "stroller",
+    title: "Bugaboo stroller with winter wheels",
+    category: "Baby & Kids",
+    price: "3 200 kr",
+    locality: "Kungsholmen",
+    region: "Stockholm",
+    distance: "4.4 km",
+    condition: "Good",
+    posted: "Yesterday",
+    postedAt: MINUTES_AGO(1440),
+    freshness: "",
+    images: [{ css: "linear-gradient(135deg, #52645a, #d9e3d3)", aiGenerated: false }],
+    description: "Clean fabric, rain cover included, winter wheels roll well on snow.",
+    seller: "Erik",
+    sellerType: "Private seller",
+    trust: "Joined 2019 · Phone verified · 18 completed deals",
+    sponsored: false
+  },
+  {
+    id: "rain-jacket",
+    title: "Waterproof shell jacket",
+    category: "Fashion",
+    price: "650 kr",
+    locality: "Hammarby",
+    region: "Stockholm",
+    distance: "5.1 km",
+    condition: "Like new",
+    posted: "Today",
+    postedAt: MINUTES_AGO(180),
+    freshness: "New today",
+    images: [{ css: "linear-gradient(135deg, #7d2935, #f0b0a6)", aiGenerated: false }],
+    description: "Size M, breathable shell, worn twice. No stains or tears.",
+    seller: "Linnea",
+    sellerType: "Private seller",
+    trust: "Email verified · Usually replies same day",
+    sponsored: false
+  },
+  {
+    id: "skis",
+    title: "Cross-country skis and poles",
+    category: "Sports & Outdoor",
+    price: "Free",
+    locality: "Nacka",
+    region: "Stockholm",
+    distance: "9.7 km",
+    condition: "Used",
+    posted: "2 days ago",
+    postedAt: MINUTES_AGO(2880),
+    freshness: "",
+    images: [{ css: "linear-gradient(135deg, #dde8ed, #47708b)", aiGenerated: false }],
+    description: "Older pair but usable. Free pickup this weekend.",
+    seller: "Oskar",
+    sellerType: "Private seller",
+    trust: "Joined 2020 · Phone verified",
+    sponsored: false
+  },
+  {
+    id: "floor-lamp",
+    title: "Brass floor lamp",
+    category: "Home & Furniture",
+    price: "450 kr",
+    locality: "Vasastan",
+    region: "Stockholm",
+    distance: "2.1 km",
+    condition: "Good",
+    posted: "3 days ago",
+    postedAt: MINUTES_AGO(4320),
+    freshness: "",
+    images: [{ css: "linear-gradient(135deg, #d0b25f, #f8edd0)", aiGenerated: false }],
+    description: "Warm brass finish, working bulb included, small mark on base.",
+    seller: "Sara",
+    sellerType: "Private seller",
+    trust: "Joined 2022 · Email verified",
+    sponsored: false
+  },
+  {
+    id: "volvo-v60",
+    title: "Volvo V60, 2018, diesel",
+    category: "Vehicles",
+    subtype: "Cars",
+    price: "149 000 kr",
+    locality: "Bromma",
+    region: "Stockholm",
+    distance: "7.4 km",
+    condition: "Good",
+    posted: "Today",
+    postedAt: MINUTES_AGO(300),
+    freshness: "New today",
+    images: [{ css: "linear-gradient(135deg, #2c3e42, #9fb8bd)", aiGenerated: false }],
+    description: "One owner, full service history, new winter tyres included. Inspection welcome.",
+    seller: "Henrik",
+    sellerType: "Private seller",
+    trust: "Joined 2018 · Phone verified · 4 completed deals",
+    sponsored: false
+  },
+  {
+    id: "city-apartment",
+    title: "2-room apartment near Slussen",
+    category: "Real Estate",
+    subtype: "For Rent",
+    price: "12 500 kr/month",
+    locality: "Östermalm",
+    region: "Stockholm",
+    distance: "1.8 km",
+    condition: "Good",
+    posted: "Yesterday",
+    postedAt: MINUTES_AGO(1500),
+    freshness: "",
+    images: [{ css: "linear-gradient(135deg, #4a5a63, #cdd9dc)", aiGenerated: false }],
+    description: "Bright 2-room flat, renovated kitchen, balcony facing the courtyard. Available from next month.",
+    seller: "Nordic Homes",
+    sellerType: "Professional seller",
+    trust: "Verified agency · 62 completed rentals · Fast responder",
+    sponsored: true
+  }
+];
+
+module.exports = { categories, listings };

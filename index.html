@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="FindNord is a mobile-first marketplace for the Scandinavians — nearby second-hand goods, vehicles, real estate, and more."
+    />
+    <title>FindNord</title>
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 36'%3E%3Crect width='36' height='36' rx='10' fill='%23206f86'/%3E%3Cpath d='M18 6 L21 15 L30 18 L21 21 L18 30 L15 21 L6 18 L15 15 Z' fill='white'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="styles.css" />
+    <!-- X conversion tracking base code -->
+    <script>
+      !function(e,t,n,s,u,a){e.twq||(s=e.twq=function(){s.exe?s.exe.apply(s,arguments):s.queue.push(arguments);
+      },s.version='1.1',s.queue=[],u=t.createElement(n),u.async=!0,u.src='https://static.ads-twitter.com/uwt.js',
+      a=t.getElementsByTagName(n)[0],a.parentNode.insertBefore(u,a))}(window,document,'script');
+      twq('config','rfixf');
+    </script>
+    <!-- End X conversion tracking base code -->
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar" aria-label="Marketplace header">
+        <button type="button" class="brand" data-view="browse-view" aria-label="FindNord home">
+          <svg class="brand-mark" width="36" height="36" viewBox="0 0 36 36" aria-hidden="true" focusable="false">
+            <rect width="36" height="36" rx="10" fill="var(--country-primary)" />
+            <path d="M18 6 L21 15 L30 18 L21 21 L18 30 L15 21 L6 18 L15 15 Z" fill="#fff" />
+          </svg>
+          <div>
+            <p class="eyebrow" id="brand-eyebrow">Nearby marketplace</p>
+            <h1>
+              <span class="brand-full">FindNord</span>
+              <span class="brand-compact" aria-hidden="true">FN</span>
+            </h1>
+          </div>
+        </button>
+        <div class="topbar-actions">
+          <label class="lang-switcher">
+            <span class="sr-only">Language</span>
+            <select id="language-select" aria-label="Language">
+              <option value="en">EN</option>
+              <option value="sv">SV</option>
+              <option value="no">NO</option>
+              <option value="da">DA</option>
+              <option value="fi">FI</option>
+              <option value="is">IS</option>
+            </select>
+          </label>
+          <button class="icon-button" id="profile-button" type="button" data-view="you-view" aria-label="Open profile">You</button>
+        </div>
+      </header>
+
+      <nav class="account-actions" id="account-actions" aria-label="Account actions" hidden></nav>
+
+      <section class="location-strip" aria-label="Active marketplace scope">
+        <button id="location-button" type="button">
+          <span id="active-location">Stockholm, Sweden</span>
+          <b id="active-radius">25 km</b>
+        </button>
+        <div class="scope-tabs" role="group" aria-label="Browse scope">
+          <button class="scope active" type="button" data-scope="Nearby">Nearby</button>
+          <button class="scope" type="button" data-scope="Country">Country</button>
+          <button class="scope" type="button" data-scope="All Nordics">All Nordics</button>
+        </div>
+      </section>
+
+      <section class="view active-view" id="browse-view" aria-labelledby="browse-title">
+        <div class="search-row">
+          <label class="search-field" for="search-input">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="10.5" cy="10.5" r="6.5" /><path d="M20 20l-4.8-4.8" /></svg>
+            <span id="search-label-text" class="sr-only">Search</span>
+            <input id="search-input" type="search" placeholder="What are you looking for?" autocomplete="off" />
+          </label>
+          <button id="filter-button" type="button">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 6h16M4 12h16M4 18h16" /><circle cx="8" cy="6" r="1.7" fill="currentColor" stroke="none" /><circle cx="16" cy="12" r="1.7" fill="currentColor" stroke="none" /><circle cx="10" cy="18" r="1.7" fill="currentColor" stroke="none" /></svg>
+            <span id="filter-button-label">Filter</span>
+          </button>
+        </div>
+
+        <div class="chip-carousel">
+          <button type="button" class="chip-carousel-arrow chip-carousel-prev" id="category-chips-prev" data-chip-scroll="-1" aria-label="Scroll categories left" hidden>‹</button>
+          <nav class="category-chips" id="category-chips" aria-label="Featured categories"></nav>
+          <button type="button" class="chip-carousel-arrow chip-carousel-next" id="category-chips-next" data-chip-scroll="1" aria-label="Scroll categories right" hidden>›</button>
+        </div>
+
+        <div class="active-filter-chips" id="active-filter-chips" aria-label="Active filters"></div>
+
+        <div class="section-title">
+          <div>
+            <p class="eyebrow" id="result-scope">Nearby</p>
+            <h2 id="browse-title">Fresh finds near you</h2>
+            <p class="sort-indicator" id="sort-indicator" hidden></p>
+          </div>
+          <span id="result-count" aria-live="polite">0 listings</span>
+        </div>
+
+        <section class="listing-grid" id="listing-grid" aria-label="Marketplace listings"></section>
+        <section class="empty-state" id="empty-state" role="status" hidden>
+          <h2 id="empty-heading">No exact matches nearby</h2>
+          <p>Try a larger radius, a country-level search, or a related category. FindNord will not change your scope silently.</p>
+        </section>
+      </section>
+
+      <section class="view" id="detail-view" aria-labelledby="detail-title">
+        <button class="back-button" id="back-to-browse" type="button">Back to browse</button>
+        <article id="listing-detail"></article>
+      </section>
+
+      <section class="view" id="profile-view" aria-labelledby="profile-title">
+        <button class="back-button" type="button" data-view="browse-view">Back</button>
+        <article id="seller-profile"></article>
+      </section>
+
+      <section class="view" id="categories-view" aria-labelledby="categories-title">
+        <div class="section-title">
+          <div>
+            <p class="eyebrow">Shop with intent</p>
+            <h2 id="categories-title">Categories</h2>
+          </div>
+        </div>
+        <div class="category-grid" id="category-grid"></div>
+      </section>
+
+      <section class="view" id="sell-view" aria-labelledby="sell-title">
+        <div class="section-title">
+          <div>
+            <p class="eyebrow">Photo first</p>
+            <h2 id="sell-title">Sell in under two minutes</h2>
+          </div>
+        </div>
+
+        <form id="sell-form" novalidate>
+          <div class="sell-field">
+            <span class="field-label" id="sell-photos-label">Photos <span class="field-hint" id="sell-photos-hint">1–6, first photo is the cover</span></span>
+            <div class="photo-grid" id="sell-photo-grid" aria-labelledby="sell-photos-label"></div>
+            <input type="file" id="sell-photo-input" accept="image/*" multiple hidden />
+            <div class="ai-photo-row">
+              <label class="field-label sr-only" for="ai-photo-prompt" id="ai-photo-prompt-label">Describe your item for AI (optional)</label>
+              <input id="ai-photo-prompt" type="text" maxlength="300" placeholder="e.g. blue vintage bicycle" autocomplete="off" />
+              <button type="button" id="generate-ai-photo" class="ai-generate-button">Generate with AI</button>
+            </div>
+            <p class="ai-photo-status" id="ai-photo-status" role="status" aria-live="polite"></p>
+          </div>
+
+          <div class="sell-field">
+            <label class="field-label" for="sell-title-input">Title</label>
+            <input id="sell-title-input" type="text" maxlength="70" placeholder="e.g. Solid oak dining table" autocomplete="off" />
+          </div>
+
+          <div class="sell-row">
+            <div class="sell-field">
+              <label class="field-label" for="sell-price-input">Price</label>
+              <input id="sell-price-input" type="number" min="0" inputmode="numeric" placeholder="0" />
+            </div>
+            <label class="free-toggle" for="sell-free-toggle">
+              <input type="checkbox" id="sell-free-toggle" />
+              <span>Free</span>
+            </label>
+          </div>
+
+          <div class="sell-row">
+            <div class="sell-field">
+              <label class="field-label" for="sell-category-select">Category</label>
+              <select id="sell-category-select"></select>
+            </div>
+            <div class="sell-field" id="sell-subtype-field" hidden>
+              <label class="field-label" for="sell-subtype-select">Type</label>
+              <select id="sell-subtype-select"></select>
+            </div>
+          </div>
+
+          <div class="sell-field">
+            <label class="field-label" for="sell-condition-select">Condition</label>
+            <select id="sell-condition-select">
+              <option value="New">New</option>
+              <option value="Like new">Like new</option>
+              <option value="Good">Good</option>
+              <option value="Fair">Fair</option>
+              <option value="Used">Used</option>
+              <option value="For parts">For parts</option>
+            </select>
+          </div>
+
+          <div class="sell-field">
+            <label class="field-label" for="sell-location-input">Approximate location</label>
+            <input id="sell-location-input" type="text" placeholder="e.g. Södermalm, Stockholm" autocomplete="off" />
+            <span class="field-hint">Shown as an approximate area. Your exact address is never published.</span>
+          </div>
+
+          <div class="sell-field">
+            <label class="field-label" for="sell-region-input" id="sell-region-label">Region</label>
+            <input id="sell-region-input" type="text" list="sell-region-datalist" placeholder="Select or type your region" autocomplete="off" />
+            <datalist id="sell-region-datalist"></datalist>
+          </div>
+
+          <div class="sell-field">
+            <label class="field-label" for="sell-description-input">Description</label>
+            <textarea id="sell-description-input" rows="4" placeholder="Condition, size, pickup details..."></textarea>
+          </div>
+
+          <div class="sell-validation" id="sell-validation" role="status" aria-live="polite"></div>
+
+          <button type="submit" id="sell-publish" class="publish-button">Publish listing</button>
+        </form>
+
+        <div class="sell-preview">
+          <p class="eyebrow">Live preview</p>
+          <div class="listing-grid preview-grid" id="sell-preview"></div>
+        </div>
+      </section>
+
+      <section class="view" id="inbox-view" aria-labelledby="inbox-title">
+        <div class="section-title">
+          <div>
+            <p class="eyebrow" id="inbox-eyebrow">Marketplace only</p>
+            <h2 id="inbox-title">Inbox</h2>
+          </div>
+        </div>
+        <div id="inbox-content"></div>
+      </section>
+
+      <section class="view" id="thread-view" aria-labelledby="thread-title">
+        <button class="back-button" type="button" data-view="inbox-view">Back</button>
+        <div id="thread-snapshot"></div>
+        <div class="thread-messages" id="thread-messages" aria-live="polite"></div>
+        <form id="thread-reply-form">
+          <label class="field-label sr-only" for="thread-reply-input" id="thread-reply-label">Message</label>
+          <textarea id="thread-reply-input" rows="2" placeholder="Write a message..."></textarea>
+          <button type="submit" class="publish-button" id="thread-send-button">Send</button>
+        </form>
+      </section>
+
+      <section class="view" id="you-view" aria-labelledby="you-title">
+        <div class="quiet-state" id="you-panel">
+          <p class="eyebrow">Your activity</p>
+          <h2 id="you-title">Saved items, listings, and trust settings</h2>
+          <p>Sign in when you want to save, message, sell, report, or create alerts.</p>
+        </div>
+      </section>
+
+      <section class="view" id="my-listings-view" aria-labelledby="my-listings-title">
+        <button class="back-button" type="button" data-view="you-view">Back</button>
+        <div class="section-title">
+          <div>
+            <p class="eyebrow" id="my-listings-eyebrow">Your activity</p>
+            <h2 id="my-listings-title">My Listings</h2>
+          </div>
+        </div>
+        <div id="my-listings-content" class="listing-grid"></div>
+      </section>
+
+      <section class="view" id="analytics-view" aria-labelledby="analytics-title">
+        <button class="back-button" type="button" data-view="you-view">Back</button>
+        <div class="section-title">
+          <div>
+            <p class="eyebrow" id="analytics-eyebrow">Your activity</p>
+            <h2 id="analytics-title">Analytics</h2>
+          </div>
+        </div>
+        <div id="analytics-content"></div>
+      </section>
+
+      <section class="view" id="login-view" aria-labelledby="login-title">
+        <button class="back-button" type="button" data-view="you-view">Back</button>
+        <div class="login-page">
+          <img
+            src="assets/login-hero.png"
+            alt="FindNord — the marketplace for the Scandinavians"
+            class="login-hero"
+          />
+          <h2 id="login-title" class="sr-only">FindNord</h2>
+          <p class="login-tagline sr-only" id="login-tagline">The marketplace for the Scandinavians</p>
+
+          <div class="google-signin-container" id="login-google-signin"></div>
+          <div class="auth-divider" id="login-divider"><span id="login-divider-text">or continue with email</span></div>
+
+          <form id="login-form">
+            <div class="sell-field" id="login-name-field" hidden>
+              <label class="field-label" for="login-name-input" id="login-name-label">Name</label>
+              <input id="login-name-input" type="text" autocomplete="name" />
+            </div>
+            <label class="field-label" for="login-email-input" id="login-email-label">Email</label>
+            <input id="login-email-input" type="email" placeholder="you@example.com" autocomplete="email" />
+            <label class="field-label" for="login-password-input" id="login-password-label">Password</label>
+            <input id="login-password-input" type="password" autocomplete="current-password" />
+            <p class="auth-error" id="login-error" role="alert" aria-live="assertive" hidden></p>
+            <button type="submit" class="modal-continue-button" id="login-continue-button">Log in</button>
+          </form>
+          <button type="button" class="link-button" id="login-mode-toggle">New to FindNord? Create an account</button>
+          <button type="button" class="opener modal-guest-button" id="login-guest-button">Continue as Guest</button>
+        </div>
+      </section>
+    </main>
+
+    <nav class="bottom-nav" aria-label="Primary navigation">
+      <button class="nav-item active" type="button" data-view="browse-view">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 11l9-8 9 8" /><path d="M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10" /></svg>
+        <span class="nav-label">Browse</span>
+      </button>
+      <button class="nav-item" type="button" data-view="categories-view">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></svg>
+        <span class="nav-label">Categories</span>
+      </button>
+      <button class="nav-item sell-tab" type="button" data-view="sell-view">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9" /><path d="M12 8v8M8 12h8" /></svg>
+        <span class="nav-label">Sell</span>
+      </button>
+      <button class="nav-item" type="button" data-view="inbox-view">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" /></svg>
+        <span class="nav-label">Inbox</span>
+      </button>
+      <button class="nav-item" type="button" data-view="you-view">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="8" r="3.5" /><path d="M4.5 20c1.5-4 4.5-6 7.5-6s6 2 7.5 6" /></svg>
+        <span class="nav-label">You</span>
+      </button>
+    </nav>
+
+    <!-- Desktop-only (>=780px) sidebar, structured after Facebook Marketplace's
+         own left sidebar: a persistent search box, primary nav, a prominent
+         "Create new listing" action, the active location, and a scannable
+         category list with icons. Mobile keeps the bottom tab bar above,
+         completely unchanged. -->
+    <aside class="marketplace-sidebar" aria-label="Marketplace sidebar">
+      <label class="sidebar-search">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="10.5" cy="10.5" r="6.5" /><path d="M20 20l-4.8-4.8" /></svg>
+        <span class="sr-only" id="sidebar-search-label">Search Marketplace</span>
+        <input id="sidebar-search-input" type="search" placeholder="Search Marketplace" autocomplete="off" />
+      </label>
+
+      <nav class="sidebar-nav" aria-label="Marketplace sections">
+        <button class="sidebar-item active" type="button" data-view="browse-view">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 11l9-8 9 8" /><path d="M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10" /></svg>
+          <span id="sidebar-browse-label">Browse all</span>
+        </button>
+        <button class="sidebar-item" type="button" data-view="categories-view">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></svg>
+          <span id="sidebar-categories-label">Categories</span>
+        </button>
+        <button class="sidebar-item" type="button" data-view="inbox-view">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" /></svg>
+          <span id="sidebar-inbox-label">Inbox</span>
+        </button>
+      </nav>
+
+      <button class="sidebar-create-button" type="button" data-view="sell-view">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9" /><path d="M12 8v8M8 12h8" /></svg>
+        <span id="sidebar-create-label">Create new listing</span>
+      </button>
+
+      <div class="sidebar-divider"></div>
+
+      <div class="sidebar-section">
+        <h3 class="sidebar-section-title" id="sidebar-location-title">Location</h3>
+        <button class="sidebar-location-link" type="button" id="sidebar-location-link" data-view="browse-view">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 21s7-7.2 7-12a7 7 0 1 0-14 0c0 4.8 7 12 7 12z" /><circle cx="12" cy="9" r="2.5" /></svg>
+          <span id="sidebar-location-text">Stockholm, Sweden · Nearby</span>
+        </button>
+      </div>
+
+      <div class="sidebar-divider"></div>
+
+      <div class="sidebar-section">
+        <h3 class="sidebar-section-title" id="sidebar-categories-title">Categories</h3>
+        <div class="sidebar-categories-list" id="sidebar-categories-list"></div>
+      </div>
+    </aside>
+
+    <div class="modal-backdrop" id="auth-modal" hidden role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+      <div class="modal-sheet">
+        <button type="button" class="modal-close" id="auth-modal-close" aria-label="Close">×</button>
+        <p class="eyebrow" id="auth-modal-eyebrow">Sign in required</p>
+        <h2 id="auth-modal-title">Sign in to continue</h2>
+        <p id="auth-modal-body">Save items, message sellers, publish listings, and report issues once you're signed in.</p>
+
+        <div class="google-signin-container" id="auth-google-signin"></div>
+        <div class="auth-divider" id="auth-divider"><span id="auth-divider-text">or continue with email</span></div>
+
+        <form id="auth-form">
+          <div class="sell-field" id="auth-name-field" hidden>
+            <label class="field-label" for="auth-name-input" id="auth-name-label">Name</label>
+            <input id="auth-name-input" type="text" autocomplete="name" />
+          </div>
+          <label class="field-label" for="auth-email-input" id="auth-email-label">Email</label>
+          <input id="auth-email-input" type="email" placeholder="you@example.com" autocomplete="email" />
+          <label class="field-label" for="auth-password-input" id="auth-password-label">Password</label>
+          <input id="auth-password-input" type="password" autocomplete="current-password" />
+          <p class="auth-error" id="auth-error" role="alert" aria-live="assertive" hidden></p>
+          <button type="submit" class="modal-continue-button" id="auth-continue-button">Log in</button>
+        </form>
+        <button type="button" class="link-button" id="auth-mode-toggle">New to FindNord? Create an account</button>
+        <button type="button" class="opener modal-guest-button" id="auth-guest-button">Continue as Guest</button>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="compose-modal" hidden role="dialog" aria-modal="true" aria-labelledby="compose-modal-title">
+      <div class="modal-sheet">
+        <button type="button" class="modal-close" id="compose-modal-close" aria-label="Close">×</button>
+        <h2 id="compose-modal-title">Message seller</h2>
+        <label class="field-label sr-only" for="compose-message-input">Message</label>
+        <textarea id="compose-message-input" rows="4"></textarea>
+        <div class="modal-actions">
+          <button type="button" class="secondary-action" id="compose-cancel-button">Cancel</button>
+          <button type="button" class="publish-button" id="compose-send-button">Send</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="filter-sheet" hidden role="dialog" aria-modal="true" aria-labelledby="filter-sheet-title">
+      <div class="modal-sheet filter-sheet-body">
+        <button type="button" class="modal-close" id="filter-sheet-close" aria-label="Close">×</button>
+        <h2 id="filter-sheet-title">Filter &amp; sort</h2>
+
+        <div class="sell-field">
+          <label class="field-label" for="filter-sort-select" id="filter-sort-label">Sort by</label>
+          <select id="filter-sort-select">
+            <option value="recent" id="filter-sort-recent">Most recent</option>
+            <option value="price-low" id="filter-sort-price-low">Lowest price</option>
+            <option value="price-high" id="filter-sort-price-high">Highest price</option>
+            <option value="nearest" id="filter-sort-nearest">Nearest</option>
+          </select>
+        </div>
+
+        <div class="sell-row">
+          <div class="sell-field">
+            <label class="field-label" for="filter-price-min" id="filter-price-min-label">Min price</label>
+            <input id="filter-price-min" type="number" min="0" inputmode="numeric" placeholder="0" />
+          </div>
+          <div class="sell-field">
+            <label class="field-label" for="filter-price-max" id="filter-price-max-label">Max price</label>
+            <input id="filter-price-max" type="number" min="0" inputmode="numeric" placeholder="Any" />
+          </div>
+        </div>
+
+        <div class="sell-field">
+          <span class="field-label" id="filter-condition-label">Condition</span>
+          <div class="filter-chip-group" id="filter-condition-group" role="group" aria-labelledby="filter-condition-label"></div>
+        </div>
+
+        <div class="sell-field">
+          <span class="field-label" id="filter-seller-label">Seller type</span>
+          <div class="filter-chip-group" id="filter-seller-group" role="group" aria-labelledby="filter-seller-label"></div>
+        </div>
+
+        <div class="sell-field">
+          <label class="field-label" for="filter-distance-select" id="filter-distance-label">Distance</label>
+          <select id="filter-distance-select">
+            <option value="" id="filter-distance-any">Any distance</option>
+            <option value="5" id="filter-distance-5">Within 5 km</option>
+            <option value="10" id="filter-distance-10">Within 10 km</option>
+            <option value="25" id="filter-distance-25">Within 25 km</option>
+            <option value="50" id="filter-distance-50">Within 50 km</option>
+            <option value="100" id="filter-distance-100">Within 100 km</option>
+          </select>
+        </div>
+
+        <div class="sell-field">
+          <label class="field-label" for="filter-region-input" id="filter-region-label">Region</label>
+          <input id="filter-region-input" type="text" list="filter-region-datalist" placeholder="Select or type a region" autocomplete="off" />
+          <datalist id="filter-region-datalist"></datalist>
+        </div>
+
+        <div class="sell-row">
+          <div class="sell-field">
+            <label class="field-label" for="filter-category-select" id="filter-category-label">Category</label>
+            <select id="filter-category-select"></select>
+          </div>
+          <div class="sell-field" id="filter-subtype-field" hidden>
+            <label class="field-label" for="filter-subtype-select" id="filter-subtype-label">Type</label>
+            <select id="filter-subtype-select"></select>
+          </div>
+        </div>
+
+        <div class="modal-actions filter-actions">
+          <button type="button" class="secondary-action" id="filter-clear-button">Clear</button>
+          <button type="button" class="secondary-action" id="filter-reset-button">Reset</button>
+          <button type="button" class="modal-continue-button" id="filter-apply-button">Apply</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+    <script src="data-service.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

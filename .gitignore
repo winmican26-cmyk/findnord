@@ -1,0 +1,6 @@
+node_modules/
+data/findnord.db
+data/findnord.db-wal
+data/findnord.db-shm
+uploads/*
+!uploads/.gitkeep

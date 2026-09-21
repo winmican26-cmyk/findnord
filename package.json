@@ -1,0 +1,14 @@
+{
+  "name": "findnord-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A static FindNord marketplace prototype built with VAD evidence.",
+  "scripts": {
+    "test": "node tests/e2e.js",
+    "serve": "node scripts/server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "express": "^5.2.1"
+  }
+}
