@@ -12,6 +12,8 @@
     "start": "node scripts/server.js"
   },
   "dependencies": {
+    "@aws-sdk/client-ses": "^3.600.0",
+    "@sentry/node": "^8.25.0",
     "better-sqlite3": "^13.0.3",
     "compression": "^1.8.2",
     "express": "^5.2.1"

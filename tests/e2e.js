@@ -947,8 +947,8 @@ assert.match(rateLimitJs, /function resetRateLimiterState\(\)/);
 assert.doesNotMatch(rateLimitJs, /require\(["'](?:express-rate-limit|rate-limiter-flexible)["']\)/, "no new npm dependency for rate limiting");
 assert.match(
   fs.readFileSync(path.join(root, "package.json"), "utf8"),
-  /"dependencies": \{\s*\n\s*"better-sqlite3":.*\n\s*"compression":.*\n\s*"express":.*\n\s*\}/,
-  "NM-A23 itself added no npm dependency (compression was added later, by the deployment-readiness Phase 0 work -- see DEPLOYMENT_READINESS_PLAN.md)"
+  /"dependencies": \{\s*\n\s*"@aws-sdk\/client-ses":.*\n\s*"@sentry\/node":.*\n\s*"better-sqlite3":.*\n\s*"compression":.*\n\s*"express":.*\n\s*\}/,
+  "Phase 2 adds @aws-sdk/client-ses (SES email) and @sentry/node (error tracking) on top of the Phase 0 baseline (better-sqlite3, compression, express)"
 );
 
 assert.match(schemaSql, /CREATE TABLE IF NOT EXISTS password_reset_tokens/);
@@ -1048,12 +1048,11 @@ assert.match(apiJs, /scope: "reports-create",\s*\n\s*windowMs: ONE_DAY_MS,\s*\n\
 // shared factory itself, so every scope gets it automatically).
 assert.match(rateLimitJs, /console\.warn\(\s*\n\s*`\[RateLimit\] blocked scope=\$\{scope\} key=\$\{keyFn\(req\)/, "a rate-limit trip must log a real, greppable [RateLimit] line with the real key, route, and count/max");
 
-// No new npm dependency was added for this slice either (compression was
-// added later, by the deployment-readiness Phase 0 work).
+// Phase 2 adds @aws-sdk/client-ses (SES email) and @sentry/node (error tracking) on top of the Phase 0 baseline.
 assert.match(
   fs.readFileSync(path.join(root, "package.json"), "utf8"),
-  /"dependencies": \{\s*\n\s*"better-sqlite3":.*\n\s*"compression":.*\n\s*"express":.*\n\s*\}/,
-  "NM-A24 itself added no npm dependency"
+  /"dependencies": \{\s*\n\s*"@aws-sdk\/client-ses":.*\n\s*"@sentry\/node":.*\n\s*"better-sqlite3":.*\n\s*"compression":.*\n\s*"express":.*\n\s*\}/,
+  "Phase 2 adds @aws-sdk/client-ses (SES email) and @sentry/node (error tracking) on top of the Phase 0 baseline (better-sqlite3, compression, express)"
 );
 
 // Deployment-readiness audit finding: no .env.example/README existed

@@ -7,12 +7,18 @@
 // better-sqlite3 choice in NM-A11. Cookies are hand-rolled for the same
 // reason -- Express doesn't parse them by default, and a real cookie is
 // ~15 lines, not worth a dependency.
+//
+// Phase 2: SES integration for real transactional email (password resets).
+// When AWS credentials are configured, sends real emails. In dev/test without
+// credentials, falls back to console.log so existing workflows (tests reading
+// the reset link from stdout) continue to work unchanged.
 
 const crypto = require("node:crypto");
 const express = require("express");
 const { makeId } = require("./db");
 const { verifyGoogleIdToken } = require("./google-auth");
 const { rateLimiter } = require("./rate-limit");
+const { SESClient, SendEmailCommand } = require("@aws-sdk/client-ses");
 
 const SESSION_COOKIE_NAME = "fn_session";
 const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days -- "stay logged in across restarts"
@@ -147,15 +153,64 @@ function createPasswordResetToken(db, userId) {
 // exact same "not configured, clear console message, graceful degrade, no
 // crash" shape already used for OPENAI_API_KEY/GOOGLE_CLIENT_ID (see
 // scripts/server.js and this file's own /google/config route). This
-// function IS the real integration seam a future email-provider slice wires
-// up (swap the console.log below for a real SendGrid/Postmark/SES call);
-// it is not a permanent shortcut, which is why it's a separate, named,
-// single-purpose function rather than an inline console.log at the call
-// site. In this dev/test environment the real reset link is logged here so
-// a developer -- or this project's own automated tests, which read it back
-// off `console.log` the same way a person reads their terminal -- can use it.
-function sendResetEmail(email, resetUrl) {
-  console.log(`[FindNord] Password reset requested for ${email}: ${resetUrl}`);
+// Phase 2: SES integration for real transactional email (password resets).
+// When AWS credentials are configured, sends real emails via SES.
+// In dev/test without credentials, falls back to console.log so existing
+// workflows (tests reading the reset link from stdout) continue to work.
+let sesClient = null;
+let sesFromEmail = null;
+
+function initSesClient() {
+  if (sesClient) return sesClient;
+  const region = process.env.AWS_REGION;
+  const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+  const fromEmail = process.env.SES_FROM_EMAIL;
+
+  if (!region || !accessKeyId || !secretAccessKey || !fromEmail) {
+    return null; // SES not configured -- caller will fall back to console.log
+  }
+
+  sesClient = new SESClient({ region });
+  sesFromEmail = fromEmail;
+  return sesClient;
+}
+
+async function sendResetEmail(email, resetUrl) {
+  const client = initSesClient();
+  const fromEmail = sesFromEmail;
+
+  if (!client || !fromEmail) {
+    // Dev/test fallback: log to console so developers and automated tests
+    // can still read the reset link from stdout.
+    console.log(`[FindNord] Password reset requested for ${email}: ${resetUrl}`);
+    return;
+  }
+
+  const subject = "FindNord — Reset your password";
+  const textBody = `You requested a password reset for your FindNord account.\n\nClick this link to set a new password (valid for 45 minutes):\n${resetUrl}\n\nIf you didn't request this, you can safely ignore this email.`;
+  const htmlBody = `<p>You requested a password reset for your FindNord account.</p><p><a href="${resetUrl}">Reset your password</a> (valid for 45 minutes)</p><p>If you didn't request this, you can safely ignore this email.</p>`;
+
+  try {
+    await client.send(new SendEmailCommand({
+      Source: fromEmail,
+      Destination: { ToAddresses: [email] },
+      Message: {
+        Subject: { Data: subject, Charset: "UTF-8" },
+        Body: {
+          Text: { Data: textBody, Charset: "UTF-8" },
+          Html: { Data: htmlBody, Charset: "UTF-8" }
+        }
+      }
+    }));
+  } catch (error) {
+    // Log the error but don't expose details to the client (generic response
+    // is a security requirement -- no account enumeration).
+    console.error(`[SES] Failed to send password reset email to ${email}:`, error);
+    // Still log to console as fallback so dev/test workflows aren't broken
+    // by a transient SES failure.
+    console.log(`[FindNord] Password reset requested for ${email}: ${resetUrl}`);
+  }
 }
 
 // --- NM-A23: rate limiting for the 4 real auth endpoints, front-loaded from

@@ -1,0 +1,83 @@
+# GitHub Actions CI workflow for FindNord
+# Runs the full E2E test suite on every push and PR, blocking merge on failure.
+# This addresses DEPLOYMENT_READINESS_PLAN.md Phase 2 item 6: "Stand up CI:
+# one GitHub Actions workflow running node tests/e2e.js on every push/PR,
+# blocking merge on failure. Confirmed zero CI exists today."
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: E2E Tests (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20.x, 22.x]
+        # Test against multiple Node versions to catch regressions early
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run E2E test suite
+        run: npm test
+        env:
+          # Test suite spins up its own real Express+SQLite server on random ports
+          # No external services needed for the core test suite
+          NODE_ENV: test
+          # Disable external dependencies in tests
+          OPENAI_API_KEY: ""
+          GOOGLE_CLIENT_ID: ""
+          ADMIN_EMAIL: "admin@test.local"
+          JWT_SECRET: "test-secret-do-not-use-in-production"
+          BOOST_PAYMENTS_ENABLED: "false"
+          SEED_DEMO_DATA: "true"
+
+      - name: Upload test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-failure-logs-${{ matrix.node-version }}
+          path: |
+            *.log
+            evidence/**/*.png
+
+  # Optional: Add a separate job for linting/type-checking if you add those tools later
+  # lint:
+  #   name: Lint
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-node@v4
+  #       with:
+  #         node-version: '20.x'
+  #         cache: 'npm'
+  #     - run: npm ci
+  #     - run: npm run lint  # Add when you have a linter configured
+
+  # Notify on failure (optional - requires Slack/webhook setup)
+  # notify-failure:
+  #   needs: test
+  #   if: failure()
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Send failure notification
+  #       run: |
+  #         curl -X POST -H 'Content-type: application/json' \
+  #           --data '{"text":"CI failed for FindNord: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' \
+  #           ${{ secrets.SLACK_WEBHOOK_URL }}

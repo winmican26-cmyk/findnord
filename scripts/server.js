@@ -5,6 +5,10 @@
 // photo is a real file under uploads/ (scripts/image-storage.js), served
 // here at /uploads, and every request gets a real session attached
 // (scripts/auth.js) via a cookie -- no more client-trusted identity.
+//
+// Phase 2: Sentry integration for error tracking. When SENTRY_DSN is
+// configured, captures and reports unhandled exceptions and errors.
+// In dev/test without DSN, runs silently without affecting behavior.
 
 const path = require("node:path");
 const fs = require("node:fs");
@@ -15,9 +19,43 @@ const { createApiRouter, rowToListing } = require("./api");
 const { createImageStorage } = require("./image-storage");
 const { attachSession, requireSession, createAuthRouter } = require("./auth");
 const { rateLimiter } = require("./rate-limit");
+const Sentry = require("@sentry/node");
 
 const root = path.resolve(__dirname, "..");
 const port = Number(process.env.PORT || 4173);
+
+// Initialize Sentry as early as possible (before any other code that might throw)
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV || "development",
+    // Only capture errors, not transactions (no tracing overhead for now)
+    tracesSampleRate: 0,
+    // Attach stack traces to all captured errors
+    attachStacktrace: true,
+    // Filter out known non-actionable noise
+    beforeSend(event, hint) {
+      const error = hint.originalException;
+      // Don't report expected 4xx errors (validation, auth, rate limits)
+      if (error && typeof error === "object" && "status" in error) {
+        const status = error.status;
+        if (status >= 400 && status < 500) return null;
+      }
+      return event;
+    }
+  });
+
+  // Global unhandled rejection/uncaught exception handlers
+  process.on("unhandledRejection", (reason) => {
+    Sentry.captureException(reason);
+    console.error("[Unhandled Rejection]", reason);
+  });
+  process.on("uncaughtException", (error) => {
+    Sentry.captureException(error);
+    console.error("[Uncaught Exception]", error);
+    // Don't exit - let the graceful shutdown handler deal with it
+  });
+}
 
 const DEFAULT_META_DESCRIPTION =
   "FindNord is a mobile-first marketplace for the Scandinavians — nearby second-hand goods, vehicles, real estate, and more.";
@@ -198,6 +236,11 @@ function createApp(db, uploadsDir) {
   app.use(compression());
   app.use(securityHeaders);
 
+  // Sentry request handler (must be before all other middleware)
+  if (process.env.SENTRY_DSN) {
+    app.use(Sentry.Handlers.requestHandler());
+  }
+
   app.use(attachSession(db));
   app.use("/api/auth", createAuthRouter(db));
   app.post(
@@ -281,6 +324,11 @@ function createApp(db, uploadsDir) {
 
   app.use(express.static(root));
 
+  // Sentry error handler (must be before custom error handler)
+  if (process.env.SENTRY_DSN) {
+    app.use(Sentry.Handlers.errorHandler());
+  }
+
   // Deployment-readiness audit finding: no custom error-handling middleware
   // existed anywhere, so any uncaught exception (e.g. the confirmed
   // NOT-NULL-constraint crash on a malformed /conversations/start-or-get
@@ -319,11 +367,21 @@ function startServer(options = {}) {
             "GOOGLE_CLIENT_SECRET is NOT needed by this app at all (see scripts/google-auth.js)."
         );
       }
-      console.log(
-        "Note: no real email provider is configured — password-reset links are logged to THIS console " +
-          "(see sendResetEmail in scripts/auth.js) instead of being emailed. That console.log call is the " +
-          "real integration seam a future slice wires up to an actual email provider."
-      );
+      const hasSes = Boolean(process.env.AWS_REGION && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && process.env.SES_FROM_EMAIL);
+      if (!hasSes) {
+        console.log(
+          "Note: AWS SES not configured — password-reset links are logged to THIS console " +
+            "(see sendResetEmail in scripts/auth.js) instead of being emailed. Set AWS_REGION, " +
+            "AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and SES_FROM_EMAIL to enable real email."
+        );
+      } else {
+        console.log("AWS SES configured — password-reset emails will be sent via SES.");
+      }
+      if (!process.env.SENTRY_DSN) {
+        console.log("Note: SENTRY_DSN not set — error tracking disabled. Set SENTRY_DSN to enable Sentry.");
+      } else {
+        console.log("Sentry configured — error tracking enabled.");
+      }
     }
   });
 

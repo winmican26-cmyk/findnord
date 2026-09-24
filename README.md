@@ -27,6 +27,8 @@ See `.env.example` for the full list with explanations. Nothing is required for 
 - `NODE_ENV=production` (enables the session cookie's `Secure` flag and disables demo-data seeding)
 - `DB_PATH` (point this at a real persistent volume — the default local path does not survive a redeploy on most PaaS hosting)
 - `ADMIN_EMAIL`, `GOOGLE_CLIENT_ID`, `OPENAI_API_KEY`, `BOOST_PAYMENTS_ENABLED` + `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET` as needed for those optional features
+- `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `SES_FROM_EMAIL` (for real password-reset emails via AWS SES)
+- `SENTRY_DSN` (for error tracking in production)
 
 ## Deployment readiness
 

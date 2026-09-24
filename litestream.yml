@@ -1,0 +1,30 @@
+# Litestream configuration for continuous SQLite replication to S3-compatible storage
+# This provides point-in-time recovery and disaster recovery for the SQLite database
+# 
+# To use: 
+# 1. Set AWS credentials with access to an S3 bucket (or S3-compatible like R2, MinIO, etc.)
+# 2. Run `litestream replicate` as a sidecar process alongside the main server
+# 3. Or integrate into the startup script
+
+# Database to replicate
+dbs:
+  - path: /app/data/findnord.db
+
+# S3-compatible storage destination
+# Uses AWS SDK - works with AWS S3, Cloudflare R2, MinIO, etc.
+replicas:
+  - type: s3
+    bucket: ${LITESTREAM_BUCKET}
+    path: findnord.db
+    region: ${AWS_REGION}
+    # Credentials from environment: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+    # For Cloudflare R2, also set: AWS_ENDPOINT_URL=https://<account-id>.r2.cloudflarestorage.com
+    sync-interval: 10s      # How often to check for changes
+    retention: 7d           # Retain snapshots for 7 days
+    snapshot-interval: 1h   # Full snapshot every hour
+
+# Optional: local filesystem backup as secondary
+# - type: file
+#   path: /app/backups
+#   sync-interval: 1m
+#   retention: 24h
