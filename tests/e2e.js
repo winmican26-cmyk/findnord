@@ -36,8 +36,11 @@ assert.match(html, /Categories/);
 assert.match(html, /Sell/);
 assert.match(html, /Inbox/);
 assert.match(html, /You/);
-assert.match(html, /https:\/\/static\.ads-twitter\.com\/uwt\.js/);
-assert.match(html, /twq\('config','rfixf'\)/);
+// Deployment-readiness Phase 1: Twitter/X conversion tracking pixel removed
+  // to align with Privacy/Cookie Policy claims ("no third-party ad-tracking").
+  // Verify the pixel and its config call are NOT present.
+  assert.doesNotMatch(html, /https:\/\/static\.ads-twitter\.com\/uwt\.js/);
+  assert.doesNotMatch(html, /twq\('config','rfixf'\)/);
 assert.match(css, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
 assert.match(
   css,
@@ -1280,6 +1283,9 @@ function makeElementMap() {
     "auth-email-input",
     "auth-password-label",
     "auth-password-input",
+    "auth-age-field",
+    "auth-age-label",
+    "auth-age-checkbox",
     "auth-error",
     "auth-continue-button",
     "auth-mode-toggle",
@@ -1387,6 +1393,9 @@ function makeElementMap() {
     "login-email-input",
     "login-password-label",
     "login-password-input",
+    "login-age-field",
+    "login-age-label",
+    "login-age-checkbox",
     "login-forgot-link",
     "login-error",
     "login-continue-button",
@@ -1788,6 +1797,11 @@ async function registerTestUser(name, email, password) {
   elements["auth-name-input"].value = name;
   elements["auth-email-input"].value = email;
   elements["auth-password-input"].value = password;
+  // Deployment-readiness audit finding: a real registration now requires
+  // confirming you're 18+ (see submitAuthForm) -- this helper simulates a
+  // real user who would check the box, same as it fills in every other
+  // field. The age GATE itself is tested directly and separately below.
+  elements["auth-age-checkbox"].checked = true;
   return context.submitAuthForm("auth", "register");
 }
 
@@ -1808,7 +1822,11 @@ async function registerRealUserDirectly(name, email, password) {
   const response = await fetch(`${serverOrigin}/api/auth/register`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name, email, password })
+    // ageConfirmed: true because this helper simulates a REAL user going
+    // through registration (used throughout this suite to prove server-side
+    // ownership checks, restart persistence, etc.) -- the age gate itself is
+    // tested directly and separately below, not through this helper.
+    body: JSON.stringify({ name, email, password, ageConfirmed: true })
   });
   const cookie = (response.headers.get("set-cookie") || "").split(";")[0];
   const user = await response.json();
@@ -2161,6 +2179,7 @@ elements["login-name-input"].value = "Page Visitor";
 elements["login-email-input"].value = "pagevisitor@example.com";
 elements["login-password-input"].value = DEFAULT_TEST_PASSWORD;
 context.setAuthMode("login", "register");
+elements["login-age-checkbox"].checked = true;
 await elements["login-form"].listeners.submit({ preventDefault() {} });
 assert.match(elements["you-panel"].innerHTML, /Signed in as: pagevisitor@example\.com/, "the login page must sign in through the same pipeline as the modal");
 await context.signOutUser();
@@ -2208,8 +2227,17 @@ result = await context.submitAuthForm("auth", "register");
 assert.equal(result, null, "a password under 8 characters must be rejected client-side");
 assert.match(elements["auth-error"].textContent, /Password must be at least 8 characters\./);
 
-// A real, successful sign-up.
+// Deployment-readiness audit finding: real age verification at
+// registration, client-side first (server-side is checked separately,
+// directly against the real API, below).
 elements["auth-password-input"].value = "realpassword1";
+assert.equal(elements["auth-age-checkbox"].checked, false, "sanity: the age checkbox must not be pre-checked");
+result = await context.submitAuthForm("auth", "register");
+assert.equal(result, null, "registration must be blocked client-side until age is confirmed");
+assert.match(elements["auth-error"].textContent, /You must confirm you're at least 18 to create an account\./);
+
+// A real, successful sign-up.
+elements["auth-age-checkbox"].checked = true;
 const newUser = await context.submitAuthForm("auth", "register");
 assert.ok(newUser, "a valid registration must succeed");
 assert.equal(newUser.email, "newperson@example.com");
@@ -2217,11 +2245,28 @@ assert.equal(typeof newUser.id, "string");
 assert.equal(Object.prototype.hasOwnProperty.call(newUser, "password"), false, "the password must never be echoed back, hashed or otherwise");
 await context.signOutUser();
 
+// The real API must independently reject an unconfirmed-age registration
+// too -- the client-side checkbox is a UX convenience, not the real gate.
+const unconfirmedAgeResponse = await fetch(`${serverOrigin}/api/auth/register`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ name: "No Age Confirm", email: "no-age-confirm@example.com", password: "realpassword1" })
+});
+assert.equal(unconfirmedAgeResponse.status, 400, "the server must reject registration with no ageConfirmed field, regardless of what the client claims to have validated");
+assert.equal((await unconfirmedAgeResponse.json()).code, "AGE_NOT_CONFIRMED");
+const falseAgeResponse = await fetch(`${serverOrigin}/api/auth/register`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ name: "False Age Confirm", email: "false-age-confirm@example.com", password: "realpassword1", ageConfirmed: "true" })
+});
+assert.equal(falseAgeResponse.status, 400, "ageConfirmed must be checked against the real boolean true, not a truthy-looking string");
+
 // Registering the SAME email again must be rejected -- one real account per email.
 context.setAuthMode("auth", "register");
 elements["auth-name-input"].value = "Impersonator";
 elements["auth-email-input"].value = "newperson@example.com";
 elements["auth-password-input"].value = "differentpassword1";
+elements["auth-age-checkbox"].checked = true;
 result = await context.submitAuthForm("auth", "register");
 assert.equal(result, null, "registering an already-used email must fail");
 assert.match(elements["auth-error"].textContent, /That email is already registered\. Try logging in instead\./);
@@ -2286,7 +2331,7 @@ assert.equal(returningGoogleUser.id, newGoogleUser.id, "the same Google account 
 const linkRegisterRes = await fetch(`${serverOrigin}/api/auth/register`, {
   method: "POST",
   headers: { "content-type": "application/json" },
-  body: JSON.stringify({ name: "Password First", email: "linkme@example.com", password: DEFAULT_TEST_PASSWORD })
+  body: JSON.stringify({ name: "Password First", email: "linkme@example.com", password: DEFAULT_TEST_PASSWORD, ageConfirmed: true })
 });
 const linkRegisteredUser = await linkRegisterRes.json();
 const linkGoogleToken = makeFakeGoogleIdToken({ payload: { sub: "google-sub-link", email: "linkme@example.com", name: "Password First" } });
@@ -4540,7 +4585,7 @@ await assertRateLimited(
       fetch(`${serverOrigin}/api/auth/register`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: "Rate Limit Register", email: "nma23-rate-limit-register@example.com", password: "somepassword1" })
+        body: JSON.stringify({ name: "Rate Limit Register", email: "nma23-rate-limit-register@example.com", password: "somepassword1", ageConfirmed: true })
       })
   ),
   "POST /api/auth/register"
@@ -4614,6 +4659,36 @@ assert.equal(nma24UserBListingResponse.status, 200, "a DIFFERENT account sharing
 
 resetRateLimiterState();
 
+// --- Deployment-readiness Phase 1 item 4: prohibited-item keyword check
+// at listing creation. Verified directly against the real API (bypassing
+// the client-side form) to prove the server-side gate works regardless of
+// what the client sends. ---
+{
+  const prohibitedTitleResponse = await fetch(`${serverOrigin}/api/listings`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: nma24UserA.cookie },
+    body: JSON.stringify({ title: "Firearm for sale", category: "Electronics", price: "100", country: "Sweden" })
+  });
+  assert.equal(prohibitedTitleResponse.status, 400, "a prohibited keyword in the title must be rejected with 400");
+  assert.equal((await prohibitedTitleResponse.json()).code, "PROHIBITED_CONTENT");
+
+  const prohibitedDescriptionResponse = await fetch(`${serverOrigin}/api/listings`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: nma24UserA.cookie },
+    body: JSON.stringify({ title: "Old bicycle", category: "Vehicles", price: "50", country: "Sweden", description: "This item includes cocaine residue" })
+  });
+  assert.equal(prohibitedDescriptionResponse.status, 400, "a prohibited keyword in the description must be rejected with 400");
+  assert.equal((await prohibitedDescriptionResponse.json()).code, "PROHIBITED_CONTENT");
+
+  // Legitimate listing with no prohibited content must still succeed
+  const cleanListingResponse = await fetch(`${serverOrigin}/api/listings`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: nma24UserA.cookie },
+    body: JSON.stringify({ title: "Vintage oak dining table", category: "Home & Furniture", price: "1200", country: "Sweden", description: "Solid oak, excellent condition" })
+  });
+  assert.equal(cleanListingResponse.status, 200, "a clean listing with no prohibited content must succeed normally");
+}
+
 // 2. Messages: a real per-account limit of 40/hour -- deliberately the
 // middle of the task's own suggested 30-60/hour range, chosen so a genuine
 // fast-moving buyer/seller negotiation (many short back-and-forth messages
@@ -4655,7 +4730,7 @@ resetRateLimiterState();
   const strangerReg = await fetch(`${serverOrigin}/api/auth/register`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: "Deploy Audit Stranger", email: "deploy-audit-stranger@example.com", password: DEFAULT_TEST_PASSWORD })
+    body: JSON.stringify({ name: "Deploy Audit Stranger", email: "deploy-audit-stranger@example.com", password: DEFAULT_TEST_PASSWORD, ageConfirmed: true })
   });
   const strangerCookie = (strangerReg.headers.get("set-cookie") || "").split(";")[0];
   const strangerUser = await strangerReg.json();

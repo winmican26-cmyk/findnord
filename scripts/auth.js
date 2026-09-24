@@ -307,6 +307,15 @@ function createAuthRouter(db, options = {}) {
       res.status(400).json({ error: "Password must be at least 8 characters.", code: "PASSWORD_TOO_SHORT" });
       return;
     }
+    // Deployment-readiness audit finding: the ToS said "you must be old
+    // enough to form a binding contract" but nothing checked it. This is the
+    // authoritative check -- the frontend's own checkbox validation
+    // (app.js's submitAuthForm) is a UX convenience, not the real gate; a
+    // direct API call must be rejected here regardless of what it claims.
+    if (body.ageConfirmed !== true) {
+      res.status(400).json({ error: "You must confirm you're at least 18 to create an account.", code: "AGE_NOT_CONFIRMED" });
+      return;
+    }
     const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
     if (existing) {
       res.status(409).json({ error: "That email is already registered.", code: "EMAIL_TAKEN" });
@@ -470,6 +479,107 @@ function createAuthRouter(db, options = {}) {
       req.currentUser.id
     );
     res.json(rowToAuthUser(db.prepare("SELECT id, name, email, phone, home_country, home_region, is_admin FROM users WHERE id = ?").get(req.currentUser.id)));
+  });
+
+  // Deployment-readiness audit finding: the Data Subject Rights page
+  // promised access/portability "by emailing support," with no actual
+  // mechanism behind it anywhere in the code. This is a real, self-service
+  // export of everything this account's own id/email touches -- no human
+  // in the loop required, though the DSR page's emailed request path still
+  // works too for anyone who prefers it.
+  router.get("/me/export", requireSession, (req, res) => {
+    const userId = req.currentUser.id;
+    const profileRow = db.prepare("SELECT id, name, email, phone, home_country, home_region, created_at FROM users WHERE id = ?").get(userId);
+    const listings = db.prepare("SELECT * FROM listings WHERE seller_id = ?").all(userId);
+    const listingIds = listings.map((listing) => listing.id);
+    const listingImages = listingIds.length
+      ? db.prepare(`SELECT * FROM listing_images WHERE listing_id IN (${listingIds.map(() => "?").join(",")})`).all(...listingIds)
+      : [];
+    const conversationIds = db
+      .prepare("SELECT conversation_id FROM conversation_participants WHERE user_id = ?")
+      .all(userId)
+      .map((row) => row.conversation_id);
+    const conversations = conversationIds.length
+      ? db.prepare(`SELECT * FROM conversations WHERE id IN (${conversationIds.map(() => "?").join(",")})`).all(...conversationIds)
+      : [];
+    // Every message IN a conversation this account is part of -- not just
+    // ones they personally sent -- because a full "export everything I can
+    // see" is what portability actually means for a two-party conversation;
+    // messages FROM the other participant are still tagged with their own
+    // sender_id, not attributed to this account.
+    const messages = conversationIds.length
+      ? db.prepare(`SELECT * FROM messages WHERE conversation_id IN (${conversationIds.map(() => "?").join(",")}) ORDER BY sent_at ASC`).all(...conversationIds)
+      : [];
+    const reviewsWritten = db.prepare("SELECT * FROM reviews WHERE reviewer_id = ?").all(userId);
+    const reviewsReceived = db.prepare("SELECT * FROM reviews WHERE reviewee_id = ?").all(userId);
+    const savedItems = db.prepare("SELECT * FROM saved_items WHERE user_id = ?").all(userId);
+    const reportsFiled = db.prepare("SELECT * FROM reports WHERE reporter_id = ?").all(userId);
+    const blocks = db.prepare("SELECT blocked_id, created_at FROM blocks WHERE blocker_id = ?").all(userId);
+
+    res.setHeader("Content-Disposition", `attachment; filename="findnord-data-export-${userId}.json"`);
+    res.json({
+      exportedAt: new Date().toISOString(),
+      profile: profileRow,
+      listings: listings.map((listing) => ({ ...listing, images: listingImages.filter((image) => image.listing_id === listing.id) })),
+      conversations,
+      messages,
+      reviewsWritten,
+      reviewsReceived,
+      savedItems,
+      reportsFiled,
+      blocks
+    });
+  });
+
+  // Deployment-readiness audit finding: the Data Subject Rights page
+  // promised erasure "by emailing support," with no actual mechanism behind
+  // it anywhere in the code. Requires re-entering the real password (a
+  // standard safety measure for an irreversible action, matching how a
+  // password change already invalidates every session below) -- a Google-
+  // only account (no password_hash) can't be asked for one, so it's exempt
+  // from that specific check but still requires the real session.
+  //
+  // ANONYMIZES rather than deletes the users row: `listings`/`reviews`/
+  // `sessions`/`conversation_participants`/etc. all have a real FK to
+  // users(id) with PRAGMA foreign_keys=ON (see scripts/db.js) and no ON
+  // DELETE CASCADE, so a hard DELETE would either throw a foreign key
+  // violation (if any real row still references this user) or require
+  // cascading deletes into every other user's shared conversations/reviews
+  // -- content that isn't solely this account's to erase. Clearing the real
+  // personal-data columns in place (name/email/phone/password_hash/
+  // google_id/home location) while keeping the row/id achieves the same
+  // real GDPR erasure of personal data without orphaning shared records.
+  // Reviews already resolve a missing/anonymized reviewer name via a LEFT
+  // JOIN fallback (see rowToReview) -- no separate fix needed there.
+  router.delete("/me", requireSession, (req, res) => {
+    const body = req.body || {};
+    const row = db.prepare("SELECT password_hash FROM users WHERE id = ?").get(req.currentUser.id);
+    if (row && row.password_hash) {
+      const password = typeof body.password === "string" ? body.password : "";
+      if (!verifyPassword(password, row.password_hash)) {
+        res.status(401).json({ error: "That password isn't correct.", code: "INVALID_PASSWORD" });
+        return;
+      }
+    }
+
+    const anonymizedEmail = `deleted-${req.currentUser.id}@deleted.findnord.invalid`;
+    const deleteAccount = db.transaction(() => {
+      db.prepare(
+        "UPDATE users SET name = 'Deleted user', email = ?, phone = NULL, password_hash = NULL, google_id = NULL, home_country = NULL, home_region = NULL WHERE id = ?"
+      ).run(anonymizedEmail, req.currentUser.id);
+      // Listings' own `seller` display name is denormalized at publish time
+      // (see scripts/api.js's POST /listings) -- update it too, or old
+      // listings would keep showing the real name forever.
+      db.prepare("UPDATE listings SET seller = 'Deleted user' WHERE seller_id = ?").run(req.currentUser.id);
+      db.prepare("DELETE FROM sessions WHERE user_id = ?").run(req.currentUser.id);
+      db.prepare("DELETE FROM password_reset_tokens WHERE user_id = ?").run(req.currentUser.id);
+      db.prepare("DELETE FROM saved_items WHERE user_id = ?").run(req.currentUser.id);
+      db.prepare("DELETE FROM blocks WHERE blocker_id = ?").run(req.currentUser.id);
+    });
+    deleteAccount();
+
+    res.setHeader("Set-Cookie", serializeExpiredSessionCookie());
+    res.status(200).json({ success: true });
   });
 
   // The Google Client ID is a PUBLIC identifier (it is embedded directly in

@@ -35,14 +35,6 @@
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 36'%3E%3Crect width='36' height='36' rx='10' fill='%23206f86'/%3E%3Cpath d='M18 6 L21 15 L30 18 L21 21 L18 30 L15 21 L6 18 L15 15 Z' fill='white'/%3E%3C/svg%3E"
     />
     <link rel="stylesheet" href="/styles.css" />
-    <!-- X conversion tracking base code -->
-    <script>
-      !function(e,t,n,s,u,a){e.twq||(s=e.twq=function(){s.exe?s.exe.apply(s,arguments):s.queue.push(arguments);
-      },s.version='1.1',s.queue=[],u=t.createElement(n),u.async=!0,u.src='https://static.ads-twitter.com/uwt.js',
-      a=t.getElementsByTagName(n)[0],a.parentNode.insertBefore(u,a))}(window,document,'script');
-      twq('config','rfixf');
-    </script>
-    <!-- End X conversion tracking base code -->
   </head>
   <body>
     <main class="app-shell">
@@ -332,6 +324,23 @@
           </div>
           <p class="auth-error" id="settings-error" role="alert" aria-live="assertive" hidden></p>
           <button type="button" class="confirm-button" id="settings-save-button">Save changes</button>
+
+          <!-- Deployment-readiness audit / Data Subject Rights: real,
+               self-service access/portability and erasure -- the DSR page
+               previously only ever promised these by emailing support. -->
+          <div class="settings-field settings-data-rights">
+            <label class="field-label" id="settings-data-rights-label">Your data</label>
+            <p class="settings-hint" id="settings-data-rights-hint">Download a copy of your data, or permanently delete your account.</p>
+            <button type="button" class="secondary-action" id="settings-export-button">Download my data</button>
+            <button type="button" class="secondary-action" id="settings-delete-account-button">Delete my account</button>
+            <div id="settings-delete-account-confirm" hidden>
+              <p id="settings-delete-account-warning">This permanently deletes your account. This cannot be undone.</p>
+              <label class="field-label" for="settings-delete-account-password" id="settings-delete-account-password-label">Confirm your password</label>
+              <input id="settings-delete-account-password" type="password" autocomplete="current-password" />
+              <button type="button" class="secondary-action" id="settings-delete-account-cancel">Cancel</button>
+              <button type="button" class="publish-button" id="settings-delete-account-confirm-button">Permanently delete my account</button>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -375,6 +384,10 @@
             <input id="login-email-input" type="email" placeholder="you@example.com" autocomplete="email" />
             <label class="field-label" for="login-password-input" id="login-password-label">Password</label>
             <input id="login-password-input" type="password" autocomplete="current-password" />
+            <label class="age-confirm-field" id="login-age-field" for="login-age-checkbox" hidden>
+              <input type="checkbox" id="login-age-checkbox" />
+              <span id="login-age-label">I confirm I am at least 18 years old.</span>
+            </label>
             <!-- NM-A23: only meaningful in login mode (there's no password to forget mid-registration) -- toggled by setAuthMode alongside the name field. -->
             <button type="button" class="link-button" id="login-forgot-link">Forgot password?</button>
             <p class="auth-error" id="login-error" role="alert" aria-live="assertive" hidden></p>
@@ -587,6 +600,13 @@
           <input id="auth-email-input" type="email" placeholder="you@example.com" autocomplete="email" />
           <label class="field-label" for="auth-password-input" id="auth-password-label">Password</label>
           <input id="auth-password-input" type="password" autocomplete="current-password" />
+          <!-- Deployment-readiness audit finding: the ToS said "you must be
+               old enough to form a binding contract" but nothing checked it.
+               Register-only, same hidden-toggle pattern as the name field. -->
+          <label class="age-confirm-field" id="auth-age-field" for="auth-age-checkbox" hidden>
+            <input type="checkbox" id="auth-age-checkbox" />
+            <span id="auth-age-label">I confirm I am at least 18 years old.</span>
+          </label>
           <!-- NM-A23: same toggle rule as login-forgot-link above. -->
           <button type="button" class="link-button" id="auth-forgot-link">Forgot password?</button>
           <p class="auth-error" id="auth-error" role="alert" aria-live="assertive" hidden></p>

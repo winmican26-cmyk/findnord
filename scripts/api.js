@@ -231,6 +231,31 @@ const LISTING_STATUSES = new Set(["active", "reserved", "sold"]);
 // which already enforced this; POST /listings previously didn't.
 const MAX_LISTING_PHOTOS = 6;
 
+// NM-A25 (Phase 1 item 4): a lightweight prohibited-item keyword check at
+// listing creation time. This is deliberately a simple, auditable list -- not
+// an AI classifier -- so it's transparent, predictable, and easy to maintain.
+// The ToS says "Prohibited, stolen, counterfeit, or illegal items are never
+// allowed" but enforcement was 100% reactive (user report -> admin hide).
+// This adds a proactive, server-side gate that meaningfully reduces exposure
+// while matching the ToS claim. A match returns a clean 400; the user can
+// still appeal by reporting if they believe it's a false positive.
+const PROHIBITED_KEYWORDS = [
+  // Weapons & explosives
+  "ammunition", "ammo", "bomb", "explosive", "firearm", "grenade", "gun", "handgun", "rifle", "shotgun", "weapon",
+  // Drugs & controlled substances
+  "cocaine", "heroin", "methamphetamine", "meth", "fentanyl", "ecstasy", "mdma", "lsd", "cannabis", "marijuana", "hashish", "weed", "drug", "narcotic", "controlled substance", "prescription drug", "steroid", "anabolic",
+  // Counterfeit & fraud
+  "counterfeit", "fake ", "replica ", "knockoff", "pirated", "bootleg",
+  // Stolen property indicators
+  "stolen", "hot goods", "fence", "fencing",
+  // Illegal services
+  "hitman", "assassin", "murder for hire", "hacking service", "carding", "fraud service",
+  // Human trafficking / exploitation
+  "trafficking", "exploitation", "child abuse", "child porn",
+  // Hazardous materials
+  "radioactive", "toxic waste", "hazardous material", "chemical weapon", "biological agent"
+];
+
 // --- NM-A24: real per-account rate limiting for listing creation, messaging,
 // and reporting -- the 3 remaining exploitable gaps PRD_AUDIT.md flagged
 // after NM-A23 front-loaded scripts/rate-limit.js's reusable factory for
@@ -548,6 +573,27 @@ function createApiRouter(db, options = {}) {
   router.post("/listings", requireSession, listingCreateRateLimiter, (req, res) => {
     const fields = req.body || {};
     const id = makeId("listing");
+
+    // NM-A25 (Phase 1 item 4): lightweight prohibited-item keyword check --
+    // server-side gate that meaningfully reduces exposure while matching the
+    // ToS claim "Prohibited, stolen, counterfeit, or illegal items are never
+    // allowed." Checks title + description (the two free-text fields a user
+    // controls) against a simple, auditable keyword list. A match returns a
+    // clean 400 with a generic message (no keyword leakage); the user can
+    // still appeal by reporting if they believe it's a false positive.
+    function checkProhibitedKeywords(text) {
+      if (!text || typeof text !== "string") return false;
+      const lower = text.toLowerCase();
+      for (const kw of PROHIBITED_KEYWORDS) {
+        if (lower.includes(kw)) return true;
+      }
+      return false;
+    }
+    if (checkProhibitedKeywords(fields.title) || checkProhibitedKeywords(fields.description)) {
+      res.status(400).json({ error: "This listing contains prohibited content and cannot be published.", code: "PROHIBITED_CONTENT" });
+      return;
+    }
+
     // Deployment-readiness audit finding: the PATCH (edit) path already caps
     // images at MAX_LISTING_PHOTOS via .slice(0, 6) below; the create path
     // never did, so a request that bypassed the client's own cap (a direct

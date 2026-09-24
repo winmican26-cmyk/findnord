@@ -53,8 +53,11 @@ const DataService = (() => {
     return request(path, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   }
 
-  function del(path) {
-    return request(path, { method: "DELETE" });
+  function del(path, body) {
+    return request(
+      path,
+      body === undefined ? { method: "DELETE" } : { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }
+    );
   }
 
   return {
@@ -102,6 +105,19 @@ const DataService = (() => {
       // email stays the real account identifier, shown but not editable here.
       updateSettings(fields) {
         return patch("/auth/me", fields);
+      },
+      // Deployment-readiness audit / Data Subject Rights: a real,
+      // self-service export of everything this account's own id/email
+      // touches -- see scripts/auth.js's GET /auth/me/export.
+      exportData() {
+        return get("/auth/me/export");
+      },
+      // A real, self-service account deletion (anonymizes the account's
+      // personal data server-side) -- see scripts/auth.js's DELETE
+      // /auth/me. `password` is required for a real (non-Google-only)
+      // account, as a safety check on this irreversible action.
+      deleteAccount(password) {
+        return del("/auth/me", { password });
       }
     },
 

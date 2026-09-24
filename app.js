@@ -51,6 +51,8 @@ const translations = {
     "auth.errorInvalidCredentials": "Incorrect email or password.",
     "auth.errorEmailTaken": "That email is already registered. Try logging in instead.",
     "auth.errorPasswordTooShort": "Password must be at least 8 characters.",
+    "auth.ageConfirmLabel": "I confirm I am at least 18 years old.",
+    "auth.errorAgeNotConfirmed": "You must confirm you're at least 18 to create an account.",
     "auth.errorNameRequired": "Add your name.",
     "auth.errorGeneric": "Something went wrong. Try again.",
     "auth.errorGoogleEmailNotVerified": "That Google account's email isn't verified yet.",
@@ -351,6 +353,8 @@ const translations = {
     "auth.errorInvalidCredentials": "Fel e-post eller lösenord.",
     "auth.errorEmailTaken": "E-postadressen är redan registrerad. Prova att logga in istället.",
     "auth.errorPasswordTooShort": "Lösenordet måste vara minst 8 tecken.",
+    "auth.ageConfirmLabel": "Jag bekräftar att jag är minst 18 år.",
+    "auth.errorAgeNotConfirmed": "Du måste bekräfta att du är minst 18 år för att skapa ett konto.",
     "auth.errorNameRequired": "Ange ditt namn.",
     "auth.errorGeneric": "Något gick fel. Försök igen.",
     "auth.errorGoogleEmailNotVerified": "E-postadressen för det Google-kontot är inte verifierad än.",
@@ -653,6 +657,8 @@ const translations = {
     "auth.errorInvalidCredentials": "Feil e-post eller passord.",
     "auth.errorEmailTaken": "Den e-postadressen er allerede registrert. Prøv å logge inn i stedet.",
     "auth.errorPasswordTooShort": "Passordet må være minst 8 tegn.",
+    "auth.ageConfirmLabel": "Jeg bekrefter at jeg er minst 18 år.",
+    "auth.errorAgeNotConfirmed": "Du må bekrefte at du er minst 18 år for å opprette en konto.",
     "auth.errorNameRequired": "Legg til navnet ditt.",
     "auth.errorGeneric": "Noe gikk feil. Prøv igjen.",
     "auth.errorGoogleEmailNotVerified": "E-postadressen til den Google-kontoen er ikke bekreftet ennå.",
@@ -953,6 +959,8 @@ const translations = {
     "auth.errorInvalidCredentials": "Forkert e-mail eller adgangskode.",
     "auth.errorEmailTaken": "Den e-mailadresse er allerede registreret. Prøv at logge ind i stedet.",
     "auth.errorPasswordTooShort": "Adgangskoden skal være mindst 8 tegn.",
+    "auth.ageConfirmLabel": "Jeg bekræfter, at jeg er mindst 18 år.",
+    "auth.errorAgeNotConfirmed": "Du skal bekræfte, at du er mindst 18 år for at oprette en konto.",
     "auth.errorNameRequired": "Tilføj dit navn.",
     "auth.errorGeneric": "Noget gik galt. Prøv igen.",
     "auth.errorGoogleEmailNotVerified": "E-mailadressen for den Google-konto er endnu ikke bekræftet.",
@@ -1253,6 +1261,8 @@ const translations = {
     "auth.errorInvalidCredentials": "Väärä sähköposti tai salasana.",
     "auth.errorEmailTaken": "Tämä sähköposti on jo rekisteröity. Kirjaudu sisään sen sijaan.",
     "auth.errorPasswordTooShort": "Salasanan on oltava vähintään 8 merkkiä.",
+    "auth.ageConfirmLabel": "Vahvistan olevani vähintään 18-vuotias.",
+    "auth.errorAgeNotConfirmed": "Sinun on vahvistettava olevasi vähintään 18-vuotias luodaksesi tilin.",
     "auth.errorNameRequired": "Lisää nimesi.",
     "auth.errorGeneric": "Jokin meni pieleen. Yritä uudelleen.",
     "auth.errorGoogleEmailNotVerified": "Tämän Google-tilin sähköpostia ei ole vielä vahvistettu.",
@@ -1553,6 +1563,8 @@ const translations = {
     "auth.errorInvalidCredentials": "Rangt netfang eða lykilorð.",
     "auth.errorEmailTaken": "Þetta netfang er þegar skráð. Prófaðu að skrá þig inn í staðinn.",
     "auth.errorPasswordTooShort": "Lykilorð þarf að vera minnst 8 stafir.",
+    "auth.ageConfirmLabel": "Ég staðfesti að ég er að minnsta kosti 18 ára.",
+    "auth.errorAgeNotConfirmed": "Þú verður að staðfesta að þú sért að minnsta kosti 18 ára til að stofna aðgang.",
     "auth.errorNameRequired": "Bættu við nafninu þínu.",
     "auth.errorGeneric": "Eitthvað fór úrskeiðis. Prófaðu aftur.",
     "auth.errorGoogleEmailNotVerified": "Netfang þessa Google-aðgangs hefur ekki verið staðfest enn.",
@@ -1885,6 +1897,7 @@ function applyTranslations() {
     "auth-name-label": "auth.nameLabel",
     "auth-email-label": "auth.emailLabel",
     "auth-password-label": "auth.passwordLabel",
+    "auth-age-label": "auth.ageConfirmLabel",
     "auth-guest-button": "auth.guest",
     "auth-divider-text": "auth.orContinueWithEmail",
     "login-divider-text": "auth.orContinueWithEmail",
@@ -1929,6 +1942,7 @@ function applyTranslations() {
     "login-name-label": "auth.nameLabel",
     "login-email-label": "auth.emailLabel",
     "login-password-label": "auth.passwordLabel",
+    "login-age-label": "auth.ageConfirmLabel",
     "login-guest-button": "auth.guest",
     "login-tagline": "login.tagline",
     "inbox-eyebrow": "inbox.eyebrow",
@@ -2581,6 +2595,8 @@ function clearAuthFormFields(prefix) {
   document.getElementById(`${prefix}-name-input`).value = "";
   document.getElementById(`${prefix}-email-input`).value = "";
   document.getElementById(`${prefix}-password-input`).value = "";
+  const ageCheckbox = document.getElementById(`${prefix}-age-checkbox`);
+  if (ageCheckbox) ageCheckbox.checked = false;
   const errorEl = document.getElementById(`${prefix}-error`);
   errorEl.hidden = true;
   errorEl.textContent = "";
@@ -2595,12 +2611,16 @@ function setAuthMode(prefix, mode) {
   authMode = mode;
   const isRegister = mode === "register";
   const nameField = document.getElementById(`${prefix}-name-field`);
+  const ageField = document.getElementById(`${prefix}-age-field`);
   const passwordInput = document.getElementById(`${prefix}-password-input`);
   const submitButton = document.getElementById(`${prefix}-continue-button`);
   const toggleButton = document.getElementById(`${prefix}-mode-toggle`);
   // NM-A23: there's no password to forget mid-registration -- only shown in login mode.
   const forgotLink = document.getElementById(`${prefix}-forgot-link`);
   if (nameField) nameField.hidden = !isRegister;
+  // Deployment-readiness audit finding: age confirmation only makes sense at
+  // registration, same visibility rule as the name field above.
+  if (ageField) ageField.hidden = !isRegister;
   if (passwordInput) passwordInput.setAttribute("autocomplete", isRegister ? "new-password" : "current-password");
   if (submitButton) submitButton.textContent = t(isRegister ? "auth.registerButton" : "auth.loginButton");
   if (toggleButton) toggleButton.textContent = t(isRegister ? "auth.modeToggleToLogin" : "auth.modeToggleToRegister");
@@ -2633,9 +2653,19 @@ async function submitAuthForm(prefix, mode) {
     errorEl.hidden = false;
     return null;
   }
+  // Deployment-readiness audit finding: the ToS said "you must be old enough
+  // to form a binding contract" but nothing checked it -- a real, if
+  // self-declared, check now exists both here and (authoritatively)
+  // server-side in scripts/auth.js's /register route.
+  const ageConfirmed = mode === "register" ? Boolean(document.getElementById(`${prefix}-age-checkbox`)?.checked) : true;
+  if (mode === "register" && !ageConfirmed) {
+    errorEl.textContent = t("auth.errorAgeNotConfirmed");
+    errorEl.hidden = false;
+    return null;
+  }
 
   try {
-    const user = mode === "register" ? await DataService.users.register({ name, email, password }) : await DataService.users.login({ email, password });
+    const user = mode === "register" ? await DataService.users.register({ name, email, password, ageConfirmed }) : await DataService.users.login({ email, password });
     await completeSignIn(user);
     return user;
   } catch (error) {
@@ -3451,6 +3481,65 @@ async function saveSettings() {
     showToast(t("settings.saved"));
   } catch (error) {
     errorEl.textContent = error.message || t("settings.failed");
+    errorEl.hidden = false;
+  }
+}
+
+// Deployment-readiness audit / Data Subject Rights: a real, self-service
+// export -- builds a real downloadable JSON file client-side from the
+// real server response, the standard Blob + object URL + temporary-anchor
+// browser download pattern (no server-side file generation needed for a
+// payload this size).
+async function handleExportDataClick() {
+  try {
+    const data = await DataService.users.exportData();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `findnord-data-export-${currentUser ? currentUser.id : "account"}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    showToast(error.message || t("settings.exportFailed"));
+  }
+}
+
+function showDeleteAccountConfirm() {
+  document.getElementById("settings-delete-account-confirm").hidden = false;
+}
+
+function hideDeleteAccountConfirm() {
+  document.getElementById("settings-delete-account-confirm").hidden = true;
+  document.getElementById("settings-delete-account-password").value = "";
+}
+
+async function handleConfirmDeleteAccountClick() {
+  const password = document.getElementById("settings-delete-account-password").value;
+  const errorEl = document.getElementById("settings-error");
+  errorEl.hidden = true;
+  try {
+    await DataService.users.deleteAccount(password);
+    hideDeleteAccountConfirm();
+    // The account is gone -- same end state as a real sign-out (clears
+    // currentUser, re-renders every currentUser-dependent surface), not a
+    // special-cased teardown path.
+    currentUser = null;
+    await refreshSavedItemsCache();
+    await refreshBlockedUsersCache();
+    await refreshInboxCache();
+    renderAccountPanel();
+    renderProfileAvatar();
+    renderAccountActions();
+    renderListings();
+    renderInbox();
+    renderMyListings();
+    showView("browse-view");
+    showToast(t("settings.accountDeleted"));
+  } catch (error) {
+    errorEl.textContent = error.message || t("settings.deleteAccountFailed");
     errorEl.hidden = false;
   }
 }
