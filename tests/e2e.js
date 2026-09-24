@@ -1642,7 +1642,18 @@ function makeTestFetch() {
 // wait 45 real minutes. Never used to fabricate data that a real HTTP
 // request wouldn't otherwise have produced.
 async function runBehavioralTests(testDb) {
-  const firstBootstrap = vm.runInNewContext(combinedJs, { document, fetch: makeTestFetch() });
+  const firstBootstrap = vm.runInNewContext(combinedJs, { 
+    document, 
+    fetch: makeTestFetch(),
+    setTimeout: setTimeout.bind(globalThis),
+    clearTimeout: clearTimeout.bind(globalThis),
+    window: {
+      setTimeout: setTimeout.bind(globalThis),
+      clearTimeout: clearTimeout.bind(globalThis),
+      addEventListener: () => {},
+      removeEventListener: () => {}
+    }
+  });
   await firstBootstrap;
 
   // NM-A21: register the real designated admin account once, outside the
@@ -1680,22 +1691,26 @@ assert.match(elements["listing-grid"].innerHTML, /aria-label="Save iPhone 14, 12
 assert.match(elements["listing-grid"].innerHTML, /class="listing-photo"[^>]*aria-hidden="true"/);
 
 elements["search-input"].value = "iphone";
-elements["search-input"].listeners.input();
-assert.equal(elements["result-count"].textContent, "1 listing");
-assert.match(elements["listing-grid"].innerHTML, /iPhone 14/);
+  elements["search-input"].listeners.input();
+  await flushDebounce();
+  assert.equal(elements["result-count"].textContent, "1 listing");
+  assert.match(elements["listing-grid"].innerHTML, /iPhone 14/);
 
-elements["search-input"].value = "sodermalm";
-elements["search-input"].listeners.input();
-assert.equal(elements["result-count"].textContent, "1 listing");
-assert.match(elements["listing-grid"].innerHTML, /Södermalm/);
+  elements["search-input"].value = "sodermalm";
+  elements["search-input"].listeners.input();
+  await flushDebounce();
+  assert.equal(elements["result-count"].textContent, "1 listing");
+  assert.match(elements["listing-grid"].innerHTML, /Södermalm/);
 
-elements["search-input"].value = "zzzz";
-elements["search-input"].listeners.input();
-assert.equal(elements["result-count"].textContent, "0 listings");
-assert.equal(elements["empty-state"].hidden, false);
+  elements["search-input"].value = "zzzz";
+  elements["search-input"].listeners.input();
+  await flushDebounce();
+  assert.equal(elements["result-count"].textContent, "0 listings");
+  assert.equal(elements["empty-state"].hidden, false);
 
-elements["search-input"].value = "";
-elements["search-input"].listeners.input();
+  elements["search-input"].value = "";
+  elements["search-input"].listeners.input();
+  await flushDebounce();
 
 // The Share button (see handleShareClick) prefers navigator.share, falling
 // back to navigator.clipboard.writeText -- deliberately NOT faking
@@ -1773,10 +1788,23 @@ const context = vm.createContext({
     },
     scrollTo(x, y) {
       scrollToCalls.push([x, y]);
-    }
+    },
+    setTimeout: setTimeout.bind(globalThis),
+    clearTimeout: clearTimeout.bind(globalThis)
   },
-  localStorage: fakeLocalStorage
+  localStorage: fakeLocalStorage,
+  setTimeout: setTimeout.bind(globalThis),
+  clearTimeout: clearTimeout.bind(globalThis)
 });
+// Debug: verify timer functions are available in context
+console.log('[TEST SETUP] setTimeout in context:', typeof context.setTimeout);
+console.log('[TEST SETUP] clearTimeout in context:', typeof context.clearTimeout);
+console.log('[TEST SETUP] window in context:', typeof context.window);
+
+// Phase 3: helper to flush debounced search in tests
+async function flushDebounce() {
+  await new Promise((resolve) => setTimeout(resolve, 200));
+}
 const secondBootstrap = vm.runInContext(combinedJs, context);
 await secondBootstrap;
 
@@ -1875,12 +1903,14 @@ context.setLanguage("en");
 context.setLanguage("sv");
 elements["search-input"].value = "bil";
 elements["search-input"].listeners.input();
+await flushDebounce();
 assert.equal(elements["result-count"].textContent, "1 annons", "\"bil\" must resolve to exactly the one real Vehicles listing via the synonym map (Swedish is still the active language here)");
 assert.match(elements["listing-grid"].innerHTML, /Volvo V60/);
 assert.doesNotMatch(elements["listing-grid"].innerHTML, /oak dining table|Brass floor lamp/i, "a Vehicles synonym must never leak into Home & Furniture results");
 
 elements["search-input"].value = "möbler";
 elements["search-input"].listeners.input();
+await flushDebounce();
 assert.equal(elements["result-count"].textContent, "2 annonser", "\"möbler\" must resolve to both real Home & Furniture listings via the synonym map");
 assert.match(elements["listing-grid"].innerHTML, /oak dining table/i);
 assert.match(elements["listing-grid"].innerHTML, /Brass floor lamp/i);
@@ -1891,6 +1921,7 @@ assert.doesNotMatch(elements["listing-grid"].innerHTML, /Volvo V60/, "a Home & F
 // or duplicate the existing accent-insensitive comparison.
 elements["search-input"].value = "mobler";
 elements["search-input"].listeners.input();
+await flushDebounce();
 assert.equal(elements["result-count"].textContent, "2 annonser", "the de-accented spelling of a synonym must match exactly like the accented one");
 
 // The pre-existing accent-insensitive SUBSTRING search (unrelated to
@@ -1898,12 +1929,14 @@ assert.equal(elements["result-count"].textContent, "2 annonser", "the de-accente
 // finds the real seed listing whose own locality is "Östermalm".
 elements["search-input"].value = "ostermalm";
 elements["search-input"].listeners.input();
+await flushDebounce();
 assert.equal(elements["result-count"].textContent, "1 annons");
 assert.match(elements["listing-grid"].innerHTML, /2-room apartment near Slussen/, "pre-existing accent-insensitive substring search must be unaffected by the new synonym layer");
 
 context.setLanguage("en");
 elements["search-input"].value = "";
 elements["search-input"].listeners.input();
+await flushDebounce();
 console.log("PASS: BL-A04 local category names -- Vehicles/Home & Furniture (and every other category) render real, distinct sv/no/da/fi/is labels across the filter select, sell select, category chips, category grid, and sidebar list, all live on setLanguage() with no reload required, with a safe fallback for an unknown category id.");
 console.log("PASS: BL-A05 localized/de-accented search -- Swedish \"bil\"/\"möbler\" (and their de-accented spellings) resolve to exactly the real listings in their mapped category with zero cross-category leakage, and the pre-existing accent-insensitive substring search (e.g. \"ostermalm\" -> \"Östermalm\") keeps working unchanged.");
 
@@ -3515,8 +3548,8 @@ assert.equal(elements["sell-publish"].textContent, "Publish listing");
 assert.match(elements["listing-detail"].innerHTML, /Vintage record player, price drop/, "saving an edit must reopen the (now updated) listing");
 
 // Status: Reserved and Sold must be clearly visible on both the card and the detail page.
-await context.handleMyListingStatusChange(managedListing.id, "reserved");
-assert.equal(context.getMyListings().find((item) => item.id === managedListing.id).status, "reserved");
+  await context.handleMyListingStatusChange(managedListing.id, "reserved");
+  assert.equal(context.getMyListings().find((item) => item.id === managedListing.id).status, "reserved");
 context.renderListings();
 assert.match(findCardHtml(managedListing.id), /status-badge status-reserved">Reserved</, "a reserved listing's card must show a Reserved badge");
 context.openListing(managedListing.id);
@@ -4413,8 +4446,12 @@ assert.equal((await reuseRes.json()).code, "RESET_TOKEN_USED");
 // minutes, so `testDb` (the real handle behind the real server) backdates
 // THIS token's real expires_at column -- the same real column the route
 // itself checks -- rather than faking the rejection any other way.
+// Phase 3: tokens are now hashed at rest, so we must hash before querying.
+function hashTestToken(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
 const expiringToken = await captureResetToken(() => forgotPasswordRequest("nma23-reset@example.com"));
-testDb.prepare("UPDATE password_reset_tokens SET expires_at = ? WHERE token = ?").run(Date.now() - 1000, expiringToken);
+testDb.prepare("UPDATE password_reset_tokens SET expires_at = ? WHERE token = ?").run(Date.now() - 1000, hashTestToken(expiringToken));
 const expiredTokenRes = await resetPasswordRequest(expiringToken, "yetanotherpassword1");
 assert.equal(expiredTokenRes.status, 400);
 assert.equal((await expiredTokenRes.json()).code, "RESET_TOKEN_EXPIRED");
@@ -5107,7 +5144,7 @@ console.log("PASS: NM-A25 fresh page loads -- a real, direct (non-client-side-na
   // than something that would pass even if og:image were silently never
   // set (see this slice's own escapeRegex helper below).
   const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const ogListing = await (await fetch(`${serverOrigin}/api/listings`)).json().then((all) => all.find((item) => item.id === reviewSellerListing.id));
+  const ogListing = await (await fetch(`${serverOrigin}/api/listings`)).json().then((res) => (res.listings || res).find((item) => item.id === reviewSellerListing.id));
   const listingHtml = await (await fetch(`${serverOrigin}/listing/${reviewSellerListing.id}`)).text();
   assert.match(listingHtml, /class="app-shell"/, "a raw HTTP GET of /listing/:id must return the real app shell HTML");
   assert.match(listingHtml, /<script src="\/app\.js/);
@@ -5127,7 +5164,7 @@ console.log("PASS: NM-A25 fresh page loads -- a real, direct (non-client-side-na
   // A DIFFERENT real listing (a seed listing, with no real uploaded photo)
   // must get DIFFERENT OG data, and no fabricated og:image -- the actual
   // proof this is per-listing, not one shared template.
-  const volvoListing = await (await fetch(`${serverOrigin}/api/listings`)).json().then((all) => all.find((item) => item.id === "volvo-v60"));
+  const volvoListing = await (await fetch(`${serverOrigin}/api/listings`)).json().then((res) => (res.listings || res).find((item) => item.id === "volvo-v60"));
   const volvoHtml = await (await fetch(`${serverOrigin}/listing/volvo-v60`)).text();
   assert.match(volvoHtml, new RegExp(`<meta property="og:title" content="${escapeRegex(volvoListing.title)} — FindNord" />`));
   assert.notEqual(listingHtml.match(/<title>[^<]*<\/title>/)[0], volvoHtml.match(/<title>[^<]*<\/title>/)[0], "two different listings must get two genuinely different <title>s, proving real per-listing data, not shared boilerplate");
@@ -5204,7 +5241,8 @@ function cleanupTestArtifacts() {
 async function assertBackendPersistsAcrossRestart(dbPath, uploadsDir) {
   const reopened = await startTestServer(dbPath, uploadsDir);
   try {
-    const listings = await (await fetch(`http://127.0.0.1:${reopened.port}/api/listings`)).json();
+    const res = await (await fetch(`http://127.0.0.1:${reopened.port}/api/listings`)).json();
+    const listings = res.listings || res;
     assert.ok(listings.length > 8, "listings published during the test run must survive a real server restart, not just live in-memory");
     const photoLamp = listings.find((listing) => listing.title === "Six-photo test lamp");
     assert.ok(photoLamp, "a specific listing published earlier in the run must still be readable after a real restart");

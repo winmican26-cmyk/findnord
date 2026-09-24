@@ -560,9 +560,156 @@ function createApiRouter(db, options = {}) {
   });
 
   // --- Listings ---
+  // Phase 3: Server-side pagination + filtering + optimized queries (fix N+1)
+  // Accepts query params: limit, offset, category, country, status, q (search),
+  // sort (newest|price_asc|price_desc|nearest), scope (Nearby|Country|All Nordics),
+  // lat/lng (for distance sorting), seller_id
   router.get("/listings", (req, res) => {
-    const rows = db.prepare("SELECT * FROM listings ORDER BY rowid ASC").all();
-    res.json(rows.map((row) => rowToListing(db, row)));
+    const {
+      limit = "10000",
+      offset = "0",
+      category,
+      country,
+      status,  // No default - only filter if explicitly provided
+      q = "",
+      sort = "newest",
+      scope = "All Nordics",
+      lat,
+      lng,
+      seller_id,
+      // Admin can see hidden listings; regular users cannot
+      include_hidden = "false"
+    } = req.query;
+
+    const lim = Math.min(Math.max(parseInt(limit, 10) || 10000, 1), 10000);
+    const off = Math.max(parseInt(offset, 10) || 0, 0);
+    const showHidden = include_hidden === "true" && req.currentUser && req.currentUser.is_admin;
+
+    // Build WHERE clause dynamically
+    const conditions = [];
+    const params = [];
+
+    if (status !== undefined && status !== null && status !== "") {
+      conditions.push("status = ?");
+      params.push(status);
+    }
+    if (category) {
+      conditions.push("category = ?");
+      params.push(category);
+    }
+    if (country) {
+      conditions.push("country = ?");
+      params.push(country);
+    }
+    if (seller_id) {
+      conditions.push("seller_id = ?");
+      params.push(seller_id);
+    }
+    if (!showHidden) {
+      conditions.push("(admin_hidden IS NULL OR admin_hidden = 0)");
+    }
+    if (q && q.trim()) {
+      const searchTerm = `%${q.trim().toLowerCase()}%`;
+      conditions.push("(LOWER(title) LIKE ? OR LOWER(description) LIKE ?)");
+      params.push(searchTerm, searchTerm);
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    // Build ORDER BY
+    let orderBy = "rowid DESC"; // default: newest first
+    if (sort === "price_asc") orderBy = "CAST(REPLACE(price, ' ', '') AS REAL) ASC";
+    else if (sort === "price_desc") orderBy = "CAST(REPLACE(price, ' ', '') AS REAL) DESC";
+    else if (sort === "nearest" && lat && lng) {
+      // Distance sorting requires lat/lng - for now fall back to newest
+      // A full implementation would use a geospatial index or compute in JS
+      orderBy = "rowid DESC";
+    }
+
+    // Single optimized query with JOINs to avoid N+1
+    const sql = `
+      SELECT
+        l.*,
+        COALESCE(
+          (SELECT json_group_array(json_object('css', li.css, 'aiGenerated', li.ai_generated))
+           FROM listing_images li
+           WHERE li.listing_id = l.id
+           ORDER BY li.position ASC),
+          '[]'
+        ) as images_json,
+        COALESCE(
+          (SELECT json_object('average', ROUND(AVG(r.rating), 1), 'count', COUNT(r.rating))
+           FROM reviews r
+           WHERE r.reviewee_id = l.seller_id),
+          '{"average": null, "count": 0}'
+        ) as seller_rating_json,
+        COALESCE(
+          (SELECT json_group_array(json_object('css', li.css, 'aiGenerated', li.ai_generated))
+           FROM listing_images li
+           WHERE li.listing_id = l.id
+           ORDER BY li.position ASC
+           LIMIT 1),
+          '[]'
+        ) as cover_json
+      FROM listings l
+      ${whereClause}
+      ORDER BY ${orderBy}
+      LIMIT ? OFFSET ?
+    `;
+
+    params.push(lim, off);
+    const rows = db.prepare(sql).all(...params);
+
+    // Also get total count for pagination metadata
+    const countSql = `SELECT COUNT(*) as total FROM listings l ${whereClause}`;
+    const countParams = params.slice(0, -2); // Remove limit/offset
+    const { total } = db.prepare(countSql).get(...countParams);
+
+    const listings = rows.map((row) => {
+      const images = JSON.parse(row.images_json);
+      const sellerRating = JSON.parse(row.seller_rating_json);
+      const cover = JSON.parse(row.cover_json);
+      return {
+        id: row.id,
+        title: row.title,
+        category: row.category,
+        subtype: row.subtype || undefined,
+        price: row.price,
+        locality: row.locality,
+        region: row.region || "",
+        country: row.country || "Sweden",
+        currency: CURRENCY_BY_COUNTRY[row.country] || "SEK",
+        distance: row.distance,
+        condition: row.condition,
+        posted: row.posted,
+        postedAt: row.posted_at,
+        freshness: row.freshness || "",
+        aiPhoto: Boolean(row.ai_photo),
+        image: cover[0] ? cover[0].css : row.image,
+        description: row.description,
+        seller: row.seller,
+        sellerId: row.seller_id || null,
+        sellerType: row.seller_type,
+        trust: row.trust,
+        sellerRating: { average: sellerRating.average, count: sellerRating.count },
+        sponsored: Boolean(row.boost_expires_at && row.boost_expires_at > Date.now()),
+        boostExpiresAt: row.boost_expires_at || null,
+        boostPackage: row.boost_package || null,
+        status: row.status || "active",
+        adminHidden: Boolean(row.admin_hidden),
+        images
+      };
+    });
+
+    res.json({
+      listings,
+      pagination: {
+        limit: lim,
+        offset: off,
+        total,
+        hasMore: off + lim < total
+      }
+    });
   });
 
   router.get("/listings/:id", (req, res) => {

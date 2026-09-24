@@ -5,8 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="FindNord is a mobile-first marketplace for the Scandinavians — nearby second-hand goods, vehicles, real estate, and more."
+      content="FindNord is a mobile-first marketplace for the Scandinavians — nearby second-hand goods, vehicles, real estate, and more. Buy and sell locally across Sweden, Norway, Denmark, Finland, and Iceland."
     />
+    <meta name="theme-color" content="#006AA7" />
+    <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+    <meta name="googlebot" content="index, follow" />
+    <meta name="bingbot" content="index, follow" />
+    <!-- AI/Research crawler hints -->
+    <meta name="ai-search" content="marketplace, classifieds, nordic, scandinavia, local commerce" />
     <title>FindNord</title>
     <!-- NM-A25: real Open Graph / Twitter Card tags. These site-wide default
          values are what every ordinary page load gets; scripts/server.js's
@@ -17,14 +23,20 @@
          not this boilerplate. See server.js's `renderIndexWithMeta`. -->
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="FindNord" />
-    <meta property="og:title" content="FindNord" />
+    <meta property="og:title" content="FindNord — Nordic Marketplace" />
     <meta
       property="og:description"
-      content="FindNord is a mobile-first marketplace for the Scandinavians — nearby second-hand goods, vehicles, real estate, and more."
+      content="FindNord is a mobile-first marketplace for the Scandinavians — nearby second-hand goods, vehicles, real estate, and more. Buy and sell locally across Sweden, Norway, Denmark, Finland, and Iceland."
     />
     <meta property="og:url" content="/" />
-    <meta name="twitter:card" content="summary" />
-    <meta name="twitter:title" content="FindNord" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale:alternate" content="sv_SE" />
+    <meta property="og:locale:alternate" content="nb_NO" />
+    <meta property="og:locale:alternate" content="da_DK" />
+    <meta property="og:locale:alternate" content="fi_FI" />
+    <meta property="og:locale:alternate" content="is_IS" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="FindNord — Nordic Marketplace" />
     <meta
       name="twitter:description"
       content="FindNord is a mobile-first marketplace for the Scandinavians — nearby second-hand goods, vehicles, real estate, and more."
@@ -34,7 +46,36 @@
       type="image/svg+xml"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 36'%3E%3Crect width='36' height='36' rx='10' fill='%23206f86'/%3E%3Cpath d='M18 6 L21 15 L30 18 L21 21 L18 30 L15 21 L6 18 L15 15 Z' fill='white'/%3E%3C/svg%3E"
     />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
     <link rel="stylesheet" href="/styles.css" />
+    <!-- JSON-LD structured data for homepage -->
+    <script type="application/ld+json" id="homepage-structured-data">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "FindNord",
+      "alternateName": "Nordic Marketplace",
+      "url": "/",
+      "description": "FindNord is a mobile-first marketplace for the Scandinavians — nearby second-hand goods, vehicles, real estate, and more.",
+      "inLanguage": ["en", "sv", "no", "da", "fi", "is"],
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": {
+          "@type": "EntryPoint",
+          "urlTemplate": "/?q={search_term_string}"
+        },
+        "query-input": "required name=search_term_string"
+      },
+      "publisher": {
+        "@type": "Organization",
+        "name": "FindNord",
+        "logo": "/icon-192.png"
+      }
+    }
+    </script>
   </head>
   <body>
     <main class="app-shell">

@@ -109,6 +109,21 @@ function verifyPassword(password, stored) {
   return crypto.timingSafeEqual(candidate, hash);
 }
 
+// Phase 3: hash session IDs and password-reset tokens at rest.
+// Tokens are already high-entropy (32 bytes = 256 bits), so a single
+// SHA-256 is sufficient -- no salt/stretching needed. Stored hash is
+// compared with constant-time equality to prevent timing attacks.
+function hashToken(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function verifyToken(token, storedHash) {
+  if (!storedHash || typeof storedHash !== "string") return false;
+  const candidate = hashToken(token);
+  if (candidate.length !== storedHash.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(candidate, "hex"), Buffer.from(storedHash, "hex"));
+}
+
 // --- Sessions: a real DB row, not a client-trusted token -- this is what
 // makes "stay logged in across a server restart" true: the row survives in
 // SQLite, and the cookie survives in the browser, independently of either
@@ -116,21 +131,24 @@ function verifyPassword(password, stored) {
 
 function createSession(db, userId) {
   const token = crypto.randomBytes(32).toString("hex");
+  const tokenHash = hashToken(token);
   const now = Date.now();
-  db.prepare("INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)").run(token, userId, now, now + SESSION_DURATION_MS);
+  // Store the hash, not the plain token. The cookie still gets the plain token.
+  db.prepare("INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)").run(tokenHash, userId, now, now + SESSION_DURATION_MS);
   return token;
 }
 
 function getUserBySessionToken(db, token) {
   if (!token) return null;
-  const session = db.prepare("SELECT * FROM sessions WHERE id = ?").get(token);
+  const tokenHash = hashToken(token);
+  const session = db.prepare("SELECT * FROM sessions WHERE id = ?").get(tokenHash);
   if (!session || session.expires_at < Date.now()) return null;
   const user = db.prepare("SELECT id, name, email, phone, home_country, home_region, is_admin FROM users WHERE id = ?").get(session.user_id);
   return rowToAuthUser(user);
 }
 
 function deleteSession(db, token) {
-  if (token) db.prepare("DELETE FROM sessions WHERE id = ?").run(token);
+  if (token) db.prepare("DELETE FROM sessions WHERE id = ?").run(hashToken(token));
 }
 
 // --- NM-A23: Password reset -- a real, single-use, expiring token, the
@@ -139,9 +157,11 @@ function deleteSession(db, token) {
 
 function createPasswordResetToken(db, userId) {
   const token = crypto.randomBytes(32).toString("hex");
+  const tokenHash = hashToken(token);
   const now = Date.now();
+  // Store the hash, not the plain token. The email still gets the plain token.
   db.prepare("INSERT INTO password_reset_tokens (token, user_id, expires_at, used_at, created_at) VALUES (?, ?, ?, NULL, ?)").run(
-    token,
+    tokenHash,
     userId,
     now + RESET_TOKEN_DURATION_MS,
     now
@@ -452,8 +472,8 @@ function createAuthRouter(db, options = {}) {
     const body = req.body || {};
     const token = typeof body.token === "string" ? body.token : "";
     const password = typeof body.password === "string" ? body.password : "";
-
-    const tokenRow = token ? db.prepare("SELECT * FROM password_reset_tokens WHERE token = ?").get(token) : null;
+    const tokenHash = hashToken(token);
+    const tokenRow = token ? db.prepare("SELECT * FROM password_reset_tokens WHERE token = ?").get(tokenHash) : null;
     if (!tokenRow) {
       res.status(400).json({ error: "This reset link is invalid.", code: "INVALID_RESET_TOKEN" });
       return;
@@ -476,7 +496,7 @@ function createAuthRouter(db, options = {}) {
     if (!user.password_hash) {
       // The reset attempt is resolved either way -- consume the token here
       // too, rather than leaving it usable for repeated probing.
-      db.prepare("UPDATE password_reset_tokens SET used_at = ? WHERE token = ?").run(Date.now(), token);
+      db.prepare("UPDATE password_reset_tokens SET used_at = ? WHERE token = ?").run(Date.now(), tokenHash);
       res.status(400).json({
         error: "This account signs in with Google — there's no password to reset. Try \"Continue with Google\" instead.",
         code: "GOOGLE_ACCOUNT_NO_PASSWORD"
@@ -491,7 +511,7 @@ function createAuthRouter(db, options = {}) {
 
     const now = Date.now();
     db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(password), user.id);
-    db.prepare("UPDATE password_reset_tokens SET used_at = ? WHERE token = ?").run(now, token);
+    db.prepare("UPDATE password_reset_tokens SET used_at = ? WHERE token = ?").run(now, tokenHash);
     // NM-A23 requirement 3: a password reset is a real security event -- every
     // existing session for this user dies, everywhere (not just the device
     // that requested the reset), forcing a genuine re-login rather than

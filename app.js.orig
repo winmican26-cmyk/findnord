@@ -1853,20 +1853,6 @@ function escapeHtml(value) {
   );
 }
 
-// Phase 3: simple debounce utility for search inputs and other
-// high-frequency events. No dependencies, ~5 lines. Returns a wrapped
-// function that delays invocation until `waitMs` has elapsed since the
-// last call. The original `this` and arguments are preserved.
-// Uses global setTimeout/clearTimeout (provided by test context).
-function debounce(fn, waitMs) {
-  let timeoutId = null;
-  return function (...args) {
-    const context = this;
-    if (timeoutId) clearTimeout(timeoutId);
-    timeoutId = setTimeout(() => fn.apply(context, args), waitMs);
-  };
-}
-
 // NM-A24: a small, hand-rolled interpolation for the ONE dynamic value these
 // rate-limit messages need (a rounded minute count) -- this codebase has no
 // i18n library and no other translated string needs a numeric placeholder,
@@ -5528,9 +5514,8 @@ function handleSellFormChange(event) {
 }
 
 function bindEvents() {
-  // Phase 3: debounce search inputs (150ms) to avoid re-filtering on every keystroke
-  document.getElementById("search-input").addEventListener("input", debounce(renderListings, 150));
-  document.getElementById("sidebar-search-input").addEventListener("input", debounce(handleSidebarSearchInput, 150));
+  document.getElementById("search-input").addEventListener("input", renderListings);
+  document.getElementById("sidebar-search-input").addEventListener("input", handleSidebarSearchInput);
   document.getElementById("back-to-browse").addEventListener("click", () => showView("browse-view"));
   document.getElementById("language-select").addEventListener("change", (event) => setLanguage(event.target.value));
   document.getElementById("sell-form").addEventListener("submit", publishListing);

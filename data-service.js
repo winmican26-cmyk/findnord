@@ -156,8 +156,18 @@ const DataService = (() => {
     },
 
     listings: {
-      getAll() {
-        return get("/listings");
+      getAll(params = {}) {
+        // By default, include all statuses for the internal cache (getMyListings needs this)
+        // UI calls that want only active should pass { status: "active" }
+        const queryParams = { status: "", ...params };
+        const query = Object.entries(queryParams)
+          .filter(([, v]) => v !== undefined && v !== null && v !== "")
+          .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+          .join("&");
+        return get(`/listings${query ? `?${query}` : ""}`).then((res) =>
+          // Phase 3: server returns { listings: [...], pagination: {...} }
+          Array.isArray(res) ? res : (res.listings || [])
+        );
       },
       findById(id) {
         return get(`/listings/${encodeURIComponent(id)}`);
