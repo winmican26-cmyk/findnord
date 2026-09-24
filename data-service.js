@@ -18,7 +18,7 @@
 // logged in across a server restart" genuinely true rather than assumed.
 //
 // Entities: User, Listing, Category/SubType, Conversation, Message,
-// SavedItem, Report.
+// SavedItem, Report, Review.
 
 const DataService = (() => {
   const API_BASE = "/api";
@@ -30,6 +30,12 @@ const DataService = (() => {
       const error = new Error(body.error || `Request to ${path} failed (${response.status}).`);
       error.code = body.code;
       error.status = response.status;
+      // NM-A24: a 429 from scripts/rate-limit.js always carries a real
+      // Retry-After header (seconds until the caller's window resets) --
+      // surfaced here on the thrown error so any UI catch block can show a
+      // real "try again in X minutes" message instead of a generic one.
+      const retryAfterHeader = response.headers.get("retry-after");
+      if (retryAfterHeader) error.retryAfter = Number(retryAfterHeader);
       throw error;
     }
     return response.json();
@@ -70,6 +76,16 @@ const DataService = (() => {
       loginWithGoogle(credential) {
         return post("/auth/google", { credential });
       },
+      // NM-A23: always resolves (the server itself always answers 200 for a
+      // well-formed request, whether or not the email is a real account --
+      // see scripts/auth.js's /forgot-password route) unless the request
+      // itself fails (network error, or a real 429 from rate limiting).
+      requestPasswordReset(email) {
+        return post("/auth/forgot-password", { email });
+      },
+      resetPassword(token, password) {
+        return post("/auth/reset-password", { token, password });
+      },
       googleConfig() {
         return get("/auth/google/config");
       },
@@ -81,6 +97,36 @@ const DataService = (() => {
       async signOut() {
         await post("/auth/logout", {});
         return null;
+      },
+      // NM-A21 follow-up: Settings under Profile -- currently just phone;
+      // email stays the real account identifier, shown but not editable here.
+      updateSettings(fields) {
+        return patch("/auth/me", fields);
+      }
+    },
+
+    // NM-A21: the internal moderation queue's own data calls -- every one of
+    // these 403s server-side for a non-admin regardless of what the
+    // frontend does, so this is a thin client, not where access control
+    // actually lives.
+    admin: {
+      getReports() {
+        return get("/reports");
+      },
+      updateReportStatus(id, status) {
+        return patch(`/reports/${encodeURIComponent(id)}`, { status });
+      },
+      hideListing(id) {
+        return post(`/admin/listings/${encodeURIComponent(id)}/hide`, {});
+      },
+      unhideListing(id) {
+        return post(`/admin/listings/${encodeURIComponent(id)}/unhide`, {});
+      },
+      flagUser(id) {
+        return post(`/admin/users/${encodeURIComponent(id)}/flag`, {});
+      },
+      unflagUser(id) {
+        return post(`/admin/users/${encodeURIComponent(id)}/unflag`, {});
       }
     },
 
@@ -117,6 +163,25 @@ const DataService = (() => {
       }
     },
 
+    // NM-A18: Boost / Premium. `activate`/`cancel` are the free path (only
+    // reachable while boost.config's paymentsEnabled is false); `checkout`
+    // is the Stripe test-mode integration point, only meaningful once it's
+    // true and the server has real Stripe keys configured.
+    boost: {
+      config() {
+        return get("/boost/config");
+      },
+      activate(listingId, packageId) {
+        return post(`/listings/${encodeURIComponent(listingId)}/boost`, { packageId });
+      },
+      cancel(listingId) {
+        return post(`/listings/${encodeURIComponent(listingId)}/unboost`, {});
+      },
+      checkout(listingId, packageId, returnUrl) {
+        return post(`/listings/${encodeURIComponent(listingId)}/boost/checkout`, { packageId, returnUrl });
+      }
+    },
+
     savedItems: {
       isSaved(userId, listingId) {
         return get(`/saved-items/status?userId=${encodeURIComponent(userId)}&listingId=${encodeURIComponent(listingId)}`);
@@ -140,6 +205,26 @@ const DataService = (() => {
       },
       getAll() {
         return get("/reports");
+      }
+    },
+
+    // NM-A20: a block is entirely from the blocker's own side -- these three
+    // methods are all the frontend ever needs (create, remove, list-mine).
+    blocks: {
+      create(blockedUserId) {
+        return post("/blocks", { blockedUserId });
+      },
+      remove(blockedUserId) {
+        return del(`/blocks/${encodeURIComponent(blockedUserId)}`);
+      },
+      getMine() {
+        return get("/blocks");
+      }
+    },
+
+    reviews: {
+      create(fields) {
+        return post("/reviews", fields);
       }
     },
 

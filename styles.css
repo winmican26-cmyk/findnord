@@ -12,6 +12,15 @@
   --cta-height: 66px;
   --country-primary: #006aa7;
   --country-accent: #fecc02;
+  /* One shared, "dynamic" (single-source, tunable in one place) rounded-
+     rectangle radius for real controls (buttons, the location pill, chips) --
+     distinct from --pill-radius, which is reserved for genuinely
+     pill/oval-shaped elements (the category-chip row, active-filter chips).
+     Introduced because .scope (Nearby/Country/All Nordics) had drifted onto
+     the pill radius, making it look oversized/oval next to the rectangular
+     location button right beside it -- direct user-reported feedback. */
+  --control-radius: 10px;
+  --pill-radius: 999px;
 }
 
 .sr-only {
@@ -36,6 +45,9 @@ html {
 }
 
 body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
   margin: 0;
   overflow-x: hidden;
   color: var(--ink);
@@ -60,7 +72,7 @@ input:focus-visible {
 
 .app-shell {
   width: min(1120px, 100%);
-  min-height: 100vh;
+  flex: 1 0 auto;
   margin: 0 auto;
   padding: 14px 14px 92px;
 }
@@ -163,21 +175,30 @@ h3 {
 .category-tile,
 #location-button {
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--control-radius);
   color: var(--ink);
   background: var(--paper);
 }
 
-/* Pill-shaped (not just rounded-rect) and with a smooth hover transition --
-   part of the "smooth, 2D" pass, matching Facebook Marketplace's own
-   filter-chip styling this app is being brought closer to. */
+/* .chip (category chips) stays pill-shaped, matching Facebook Marketplace's
+   own filter-chip styling from the "smooth, 2D" pass. .scope (Nearby/
+   Country/All Nordics) uses the same shared rectangular --control-radius as
+   the location button right beside it, not a pill -- direct user feedback
+   that the pill shape looked oversized/inconsistent there. */
 .scope,
 .chip {
   border: 1px solid var(--line);
-  border-radius: 999px;
   color: var(--ink);
   background: var(--paper);
   transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.scope {
+  border-radius: var(--control-radius);
+}
+
+.chip {
+  border-radius: var(--pill-radius);
 }
 
 .scope:hover,
@@ -253,6 +274,18 @@ h3 {
 
 .account-action.logout {
   background: var(--red);
+}
+
+.account-action.settings {
+  background: #3d5a80;
+}
+
+/* NM-A21: the internal moderation queue's own entry point -- a deliberately
+   distinct, slightly muted color (not one of the bright per-feature colors
+   above) since it's an internal tool an ordinary user never even sees, not
+   another everyday marketplace action. */
+.account-action.admin {
+  background: #4a4e57;
 }
 
 .account-action.boosted {
@@ -378,6 +411,18 @@ h3 {
   overflow-x: auto;
   scroll-behavior: smooth;
   scrollbar-width: none;
+}
+
+/* .location-strip's own align-items: stretch (below) is what stretches
+   #location-button's sibling .scope-tabs container to match its full
+   (two-line) height -- correct for the CONTAINER, but flex's default
+   align-items: stretch then also stretched every individual .scope button
+   inside it to that same tall height, making a single line of text
+   ("Nearby") sit in an oversized box next to the location button. Centering
+   the buttons within their own (still full-height) container keeps them at
+   their real, compact min-height instead. */
+.scope-tabs {
+  align-items: center;
 }
 
 .chip-carousel {
@@ -655,6 +700,18 @@ h3 {
   background: var(--ink);
 }
 
+/* NM-A21: the moderation queue's own report-status badge reuses the same
+   .status-badge pill, with its own two overrides -- "open" (needs
+   attention) keeps the default sun color, "reviewed"/"dismissed" get
+   calmer, resolved-looking colors instead. */
+.status-badge.status-reviewed {
+  background: var(--green);
+}
+
+.status-badge.status-dismissed {
+  background: var(--muted);
+}
+
 .listing-photo .status-badge {
   position: absolute;
   top: 8px;
@@ -727,6 +784,22 @@ h3 {
 .empty-state,
 .quiet-state {
   padding: 18px;
+}
+
+.fairness-section {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--line);
+}
+
+.fairness-section h3 {
+  margin: 0 0 4px;
+}
+
+.fairness-section-subtitle {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 
 .back-button {
@@ -943,6 +1016,155 @@ dd {
   text-decoration-color: currentColor;
 }
 
+/* NM-A16 profile page: reuses the NM-A17 rating/review data already flowing
+   through the API (ratingSummaryForUser/recentReviewsForUser), so a
+   profile's "Recent reviews" list needs its own light styling even though
+   NM-A16 itself doesn't implement the reviewing UI (that lives on the
+   listing detail page instead, styled below). */
+.profile-reviews-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.profile-review-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--paper);
+}
+
+.profile-review-meta {
+  margin: 0 0 4px;
+  font-size: 0.86rem;
+}
+
+.profile-review-stars {
+  color: var(--sun);
+}
+
+.profile-review-text {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+/* NM-A17 listing-detail review UI: styled here only for visual consistency
+   with the rest of the app (plain, unstyled form controls would otherwise
+   look broken next to everything else on the page) -- the reviewing feature
+   itself belongs to NM-A17, not this slice. */
+.seller-rating-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.seller-rating-summary.empty {
+  font-weight: 500;
+}
+
+.review-box {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--paper);
+}
+
+.review-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.review-rating-select,
+.review-text-input {
+  min-height: 44px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--ink);
+  background: var(--bg);
+  font: inherit;
+}
+
+.review-text-input {
+  min-height: 72px;
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+/* NM-A18: Boost / Premium sheet. */
+.boost-sheet-intro {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.boost-sheet-subtitle {
+  margin: 16px 0 10px;
+  font-size: 0.92rem;
+}
+
+.boost-active-status {
+  margin: 0 0 10px;
+  padding: 12px;
+  border: 1px solid var(--green);
+  border-radius: 8px;
+  background: #eef7f1;
+  font-weight: 700;
+}
+
+.boost-package-list {
+  display: grid;
+  gap: 10px;
+}
+
+.boost-package-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--paper);
+}
+
+.boost-package-row.active {
+  border-color: var(--green);
+  background: #eef7f1;
+}
+
+.boost-package-info {
+  display: grid;
+  gap: 2px;
+}
+
+.boost-package-price {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.boost-price-free {
+  color: var(--green);
+  font-weight: 800;
+}
+
+.boost-package-price-original {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-decoration: line-through;
+}
+
 .category-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1109,6 +1331,15 @@ dd {
   align-items: end;
 }
 
+/* Two genuinely equal fields (Min/Max price) must split evenly -- the
+   default 1fr/auto (sized for Price+Free-toggle, where the second column is
+   meant to stay compact) otherwise lets the second field's own content
+   width squeeze the first down to almost nothing at narrow widths. A real,
+   user-reported regression at 320px. */
+.sell-row-split {
+  grid-template-columns: 1fr 1fr;
+}
+
 .free-toggle {
   display: flex;
   align-items: center;
@@ -1262,13 +1493,20 @@ dd {
   font: inherit;
 }
 
+/* BL-A09: a utility action (an alternative to a real uploaded photo), not
+   the Sell form's primary action -- used to hardcode var(--sea), which is
+   coincidentally identical to Sweden's own var(--country-primary) default,
+   so it visually competed with (and, once .publish-button below was
+   corrected to the real brand color, would have become visually
+   IDENTICAL to) "Publish listing" for attention. Quieter neutral fill,
+   matching .confirm-button's same reasoning. */
 .ai-generate-button {
   min-height: 44px;
   padding: 0 14px;
   border: 0;
   border-radius: 8px;
   color: #fff;
-  background: var(--sea);
+  background: var(--muted);
   font-weight: 800;
   white-space: nowrap;
 }
@@ -1487,6 +1725,17 @@ dd {
   font-weight: 700;
 }
 
+/* NM-A23: the forgot-password/reset-password modals' generic confirmation
+   text (always shown for forgot-password, since the response is always
+   generic -- see scripts/auth.js) -- same shape as .auth-error, just green,
+   matching the existing .sell-validation.success color convention. */
+.auth-success {
+  margin: 0;
+  color: var(--green);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
 .sell-validation {
   min-height: 1.2em;
   color: var(--red);
@@ -1498,14 +1747,40 @@ dd {
   color: var(--green);
 }
 
+/* BL-A09: the one true primary-action style -- reserved for the single
+   most consequential action on a given screen (Publish listing, Submit
+   report, the sign-in prompts on an empty state). Uses the real, dynamic
+   brand color (var(--country-primary), Swedish blue by default) rather
+   than the old hardcoded green, both to match the brand plan's own
+   blue/yellow-first palette and so this button visually reads as "the"
+   primary action instead of competing with .confirm-button below for
+   attention. */
 .publish-button {
   min-height: 48px;
   border: 0;
   border-radius: 8px;
   color: #fff;
-  background: var(--green);
+  background: var(--country-primary);
   font-weight: 900;
   font-size: 1rem;
+}
+
+/* BL-A09: routine, low-stakes confirm actions (send a chat message, save a
+   settings field, accept the cookie notice) that used to reuse
+   .publish-button wholesale -- same visual weight as "Publish listing",
+   the app's single rarest and most consequential action. Smaller and
+   visually quieter (a neutral fill, not the brand color), so utility
+   actions genuinely stay quieter than the real primary action, matching
+   BL-A09's own success criteria. */
+.confirm-button {
+  min-height: 40px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  background: var(--muted);
+  font-weight: 700;
+  font-size: 0.92rem;
 }
 
 .sell-preview {
@@ -1527,6 +1802,80 @@ dd {
   color: #fff;
   background: var(--green);
   border-color: var(--green);
+}
+
+/* NM-A20: Report/Block on a seller profile -- reuses the same
+   .secondary-action pill everything else on this app already uses, just in
+   its own small row under the profile header. */
+.profile-trust-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+
+/* NM-A21 follow-up: Settings under Profile. */
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+.settings-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+/* NM-A21: the internal moderation queue -- plain, calm cards, consistent
+   with the rest of the app's existing card/box styling rather than a
+   separate "admin theme." */
+.admin-report-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  padding: 14px;
+  margin-bottom: 12px;
+}
+
+.admin-report-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.admin-report-reason {
+  font-weight: 800;
+}
+
+.admin-report-target,
+.admin-report-footer {
+  margin: 4px 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.admin-report-details {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--line);
+  background: var(--bg);
+}
+
+.admin-report-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.secondary-action.blocked {
+  color: #fff;
+  background: var(--red);
+  border-color: var(--red);
 }
 
 .modal-backdrop {
@@ -1868,4 +2217,252 @@ dd {
   .card-copy {
     padding: 8px;
   }
+}
+
+/* --- Site footer + cookie banner + static content pages ---
+   Structured after the afromarketplaces.com reference (brand+CTAs column,
+   multi-column link groups, a browse-by-country strip, a legal bottom bar)
+   but using FindNord's own Nordic-blue brand identity, not Afro's African
+   continent artwork -- the reference informed the STRUCTURE, not the art. */
+.site-footer {
+  flex-shrink: 0;
+  padding: 32px 14px calc(24px + var(--nav-height));
+  color: #eef3f1;
+  background: var(--ink);
+}
+
+.footer-top {
+  display: grid;
+  gap: 28px;
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.footer-brand-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 1.2rem;
+}
+
+.footer-tagline {
+  margin: 0 0 14px;
+  color: #c3cfc9;
+  font-size: 0.86rem;
+}
+
+.footer-cta-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.footer-cta {
+  min-height: 42px;
+  padding: 0 16px;
+  border: 1px solid #3b473f;
+  border-radius: 999px;
+  color: #eef3f1;
+  background: transparent;
+  font-weight: 800;
+}
+
+.footer-cta.primary {
+  border-color: var(--country-primary);
+  color: #fff;
+  background: var(--country-primary);
+}
+
+.footer-contact {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: #c3cfc9;
+  font-size: 0.84rem;
+}
+
+.footer-contact a {
+  color: #eef3f1;
+}
+
+.footer-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px 16px;
+}
+
+.footer-column h3 {
+  margin: 0 0 10px;
+  color: #eef3f1;
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.footer-column ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.footer-column button {
+  border: 0;
+  padding: 0;
+  color: #c3cfc9;
+  background: none;
+  font: inherit;
+  font-size: 0.88rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.footer-column button:hover {
+  color: #fff;
+  text-decoration: underline;
+}
+
+.footer-countries {
+  max-width: 1120px;
+  margin: 28px auto 0;
+  padding-top: 20px;
+  border-top: 1px solid #33403a;
+}
+
+.footer-countries h3 {
+  margin: 0 0 12px;
+  color: #eef3f1;
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.footer-country-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.footer-country-flag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #33403a;
+  border-radius: 999px;
+  padding: 4px 12px 4px 4px;
+  color: #eef3f1;
+  background: transparent;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.footer-country-flag:hover {
+  border-color: var(--country-primary);
+}
+
+.footer-country-flag svg {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+}
+
+.footer-bottom {
+  max-width: 1120px;
+  margin: 20px auto 0;
+  padding-top: 16px;
+  border-top: 1px solid #33403a;
+  color: #93a49c;
+  font-size: 0.76rem;
+}
+
+.footer-bottom p {
+  margin: 0;
+}
+
+@media (min-width: 780px) {
+  .site-footer {
+    margin-left: 280px;
+    padding: 40px 24px calc(24px + var(--nav-height));
+  }
+
+  .footer-top {
+    grid-template-columns: minmax(220px, 0.9fr) 2fr;
+    gap: 40px;
+  }
+
+  .footer-columns {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+
+/* Cookie consent banner: shown once (localStorage-backed), never fixed --
+   avoids any overlap with the already-crowded fixed bottom-nav/CTA-bar
+   real estate on mobile. */
+.cookie-banner {
+  position: sticky;
+  bottom: 0;
+  z-index: 8;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border-top: 1px solid var(--line);
+  background: var(--paper);
+  box-shadow: 0 -4px 16px rgba(24, 35, 31, 0.12);
+}
+
+.cookie-banner[hidden] {
+  display: none;
+}
+
+.cookie-banner p {
+  flex: 1 1 260px;
+  margin: 0;
+  font-size: 0.84rem;
+}
+
+.cookie-banner-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Static content pages (About, Privacy Policy, Terms, DSR, etc.) -- one
+   reusable view + template, not one bespoke view per footer link. */
+.static-page-body {
+  display: grid;
+  gap: 14px;
+  max-width: 720px;
+}
+
+.static-page-body h2 {
+  margin: 0;
+}
+
+.static-page-body h3 {
+  margin: 10px 0 0;
+}
+
+.static-page-body p,
+.static-page-body li {
+  color: var(--ink);
+  line-height: 1.55;
+}
+
+.static-page-body ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.static-page-updated {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
 }

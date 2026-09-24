@@ -8,12 +8,33 @@
       content="FindNord is a mobile-first marketplace for the Scandinavians — nearby second-hand goods, vehicles, real estate, and more."
     />
     <title>FindNord</title>
+    <!-- NM-A25: real Open Graph / Twitter Card tags. These site-wide default
+         values are what every ordinary page load gets; scripts/server.js's
+         dedicated `/listing/:id` (and `/profile/:id`) route handlers
+         string-replace the `content`/`<title>` values below with the real,
+         per-item title/description/url/image before serving the HTML, so a
+         shared listing/profile link unfurls with that item's own real data,
+         not this boilerplate. See server.js's `renderIndexWithMeta`. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="FindNord" />
+    <meta property="og:title" content="FindNord" />
+    <meta
+      property="og:description"
+      content="FindNord is a mobile-first marketplace for the Scandinavians — nearby second-hand goods, vehicles, real estate, and more."
+    />
+    <meta property="og:url" content="/" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="FindNord" />
+    <meta
+      name="twitter:description"
+      content="FindNord is a mobile-first marketplace for the Scandinavians — nearby second-hand goods, vehicles, real estate, and more."
+    />
     <link
       rel="icon"
       type="image/svg+xml"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 36'%3E%3Crect width='36' height='36' rx='10' fill='%23206f86'/%3E%3Cpath d='M18 6 L21 15 L30 18 L21 21 L18 30 L15 21 L6 18 L15 15 Z' fill='white'/%3E%3C/svg%3E"
     />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="/styles.css" />
     <!-- X conversion tracking base code -->
     <script>
       !function(e,t,n,s,u,a){e.twq||(s=e.twq=function(){s.exe?s.exe.apply(s,arguments):s.queue.push(arguments);
@@ -104,6 +125,8 @@
           <h2 id="empty-heading">No exact matches nearby</h2>
           <p>Try a larger radius, a country-level search, or a related category. FindNord will not change your scope silently.</p>
         </section>
+
+        <div id="fairness-section-container"></div>
       </section>
 
       <section class="view" id="detail-view" aria-labelledby="detail-title">
@@ -231,7 +254,7 @@
         <form id="thread-reply-form">
           <label class="field-label sr-only" for="thread-reply-input" id="thread-reply-label">Message</label>
           <textarea id="thread-reply-input" rows="2" placeholder="Write a message..."></textarea>
-          <button type="submit" class="publish-button" id="thread-send-button">Send</button>
+          <button type="submit" class="confirm-button" id="thread-send-button">Send</button>
         </form>
       </section>
 
@@ -265,11 +288,75 @@
         <div id="analytics-content"></div>
       </section>
 
+      <!-- NM-A21 follow-up: real Settings under Profile -- currently just
+           Contact info (email, shown but read-only; a real, editable phone
+           number). Kept intentionally small -- not a general account-editor.
+           Static markup (like the Sell/auth forms), not innerHTML-rebuilt on
+           every render, so its own listener is bound once in bindEvents(). -->
+      <section class="view" id="settings-view" aria-labelledby="settings-title">
+        <button class="back-button" type="button" data-view="you-view">Back</button>
+        <div class="section-title">
+          <div>
+            <p class="eyebrow" id="settings-eyebrow">Your profile</p>
+            <h2 id="settings-title">Settings</h2>
+          </div>
+        </div>
+        <div class="quiet-state" id="settings-signed-out" hidden>
+          <p id="settings-signed-out-text">Sign in to manage your contact info.</p>
+        </div>
+        <div id="settings-form-wrap">
+          <div class="settings-field">
+            <label class="field-label" for="settings-email-display" id="settings-email-label">Email</label>
+            <input id="settings-email-display" type="email" disabled />
+            <p class="settings-hint" id="settings-email-hint">This is your account's sign-in email and can't be changed here.</p>
+          </div>
+          <div class="settings-field">
+            <label class="field-label" for="settings-phone-input" id="settings-phone-label">Mobile number</label>
+            <input id="settings-phone-input" type="tel" placeholder="e.g. +46 70 123 45 67" />
+          </div>
+          <div class="settings-field">
+            <label class="field-label" for="settings-home-country-select" id="settings-home-country-label">Home country</label>
+            <select id="settings-home-country-select">
+              <option value="Sweden">Sweden</option>
+              <option value="Norway">Norway</option>
+              <option value="Denmark">Denmark</option>
+              <option value="Finland">Finland</option>
+              <option value="Iceland">Iceland</option>
+            </select>
+          </div>
+          <div class="settings-field">
+            <label class="field-label" for="settings-home-region-input" id="settings-home-region-label">Home region</label>
+            <input id="settings-home-region-input" type="text" list="settings-home-region-datalist" placeholder="Select or type your region" autocomplete="off" />
+            <datalist id="settings-home-region-datalist"></datalist>
+            <p class="settings-hint" id="settings-home-location-hint">Used for new listings you publish -- separate from whatever country you're currently browsing.</p>
+          </div>
+          <p class="auth-error" id="settings-error" role="alert" aria-live="assertive" hidden></p>
+          <button type="button" class="confirm-button" id="settings-save-button">Save changes</button>
+        </div>
+      </section>
+
+      <!-- NM-A21: the internal moderation queue. Never linked to from
+           anywhere a non-admin's DOM would render (see renderAccountActions),
+           and openAdminQueue() itself refuses to show real content for
+           anyone whose currentUser.isAdmin isn't true -- server-side
+           requireAdmin on every real request is the actual enforcement;
+           this is defense in depth, not the real gate. -->
+      <section class="view" id="admin-view" aria-labelledby="admin-title">
+        <button class="back-button" type="button" data-view="you-view">Back</button>
+        <div class="section-title">
+          <div>
+            <p class="eyebrow" id="admin-eyebrow">Internal</p>
+            <h2 id="admin-title">Moderation Queue</h2>
+          </div>
+        </div>
+        <div id="admin-content"></div>
+      </section>
+
       <section class="view" id="login-view" aria-labelledby="login-title">
         <button class="back-button" type="button" data-view="you-view">Back</button>
         <div class="login-page">
           <img
-            src="assets/login-hero.png"
+            src="/assets/login-hero.png"
             alt="FindNord — the marketplace for the Scandinavians"
             class="login-hero"
           />
@@ -288,6 +375,8 @@
             <input id="login-email-input" type="email" placeholder="you@example.com" autocomplete="email" />
             <label class="field-label" for="login-password-input" id="login-password-label">Password</label>
             <input id="login-password-input" type="password" autocomplete="current-password" />
+            <!-- NM-A23: only meaningful in login mode (there's no password to forget mid-registration) -- toggled by setAuthMode alongside the name field. -->
+            <button type="button" class="link-button" id="login-forgot-link">Forgot password?</button>
             <p class="auth-error" id="login-error" role="alert" aria-live="assertive" hidden></p>
             <button type="submit" class="modal-continue-button" id="login-continue-button">Log in</button>
           </form>
@@ -295,7 +384,116 @@
           <button type="button" class="opener modal-guest-button" id="login-guest-button">Continue as Guest</button>
         </div>
       </section>
+
+      <section class="view" id="static-page-view" aria-labelledby="static-page-title">
+        <button class="back-button" type="button" data-view="browse-view">Back</button>
+        <article id="static-page-content"></article>
+      </section>
     </main>
+
+    <!-- Site footer, structured after the reference (afromarketplaces.com):
+         brand + CTAs + contact, multi-column link groups, a browse-by-country
+         flag strip, and a legal bottom bar -- adapted to FindNord's own
+         brand (Nordic blue, not Afro's continent artwork) and real features
+         (every link either reuses an existing view/action or opens a real,
+         if brief, static content page -- nothing points at a dead "#"). -->
+    <footer class="site-footer" aria-label="Site footer">
+      <div class="footer-top">
+        <div class="footer-brand">
+          <div class="footer-brand-header">
+            <svg class="brand-mark" width="32" height="32" viewBox="0 0 36 36" aria-hidden="true" focusable="false">
+              <rect width="36" height="36" rx="10" fill="var(--country-primary)" />
+              <path d="M18 6 L21 15 L30 18 L21 21 L18 30 L15 21 L6 18 L15 15 Z" fill="#fff" />
+            </svg>
+            <strong>FindNord</strong>
+          </div>
+          <p class="footer-tagline" id="footer-tagline">The marketplace for the Scandinavians. Buy, sell &amp; discover across the Nordics.</p>
+          <div class="footer-cta-buttons">
+            <button type="button" class="footer-cta primary" data-view="login-view" id="footer-cta-account">Create free account</button>
+            <button type="button" class="footer-cta" data-view="sell-view" id="footer-cta-sell">Start selling</button>
+          </div>
+          <ul class="footer-contact">
+            <li><a href="mailto:support@findnord.com">support@findnord.com</a></li>
+            <li id="footer-company-line">FindNord — a branch of Micany Investment</li>
+          </ul>
+        </div>
+
+        <nav class="footer-columns" aria-label="Footer">
+          <div class="footer-column">
+            <h3 id="footer-col-categories">Categories</h3>
+            <ul>
+              <li><button type="button" data-category-jump="Vehicles">Vehicles</button></li>
+              <li><button type="button" data-category-jump="Real Estate">Real Estate</button></li>
+              <li><button type="button" data-category-jump="Electronics">Electronics</button></li>
+              <li><button type="button" data-category-jump="Home &amp; Furniture">Home &amp; Furniture</button></li>
+              <li><button type="button" data-view="categories-view" id="footer-browse-all">Browse all →</button></li>
+            </ul>
+          </div>
+          <div class="footer-column">
+            <h3 id="footer-col-explore">Explore</h3>
+            <ul>
+              <li><button type="button" data-static-page="about" id="footer-link-about">About Us</button></li>
+              <li><button type="button" data-static-page="howItWorks" id="footer-link-how">How It Works</button></li>
+              <li><button type="button" data-static-page="safetyTips" id="footer-link-safety-tips">Safety Tips</button></li>
+              <li><button type="button" data-static-page="termsOfService" id="footer-link-terms-explore">Terms of Service</button></li>
+            </ul>
+          </div>
+          <div class="footer-column">
+            <h3 id="footer-col-buysell">Buy &amp; Sell</h3>
+            <ul>
+              <li><button type="button" data-view="sell-view" id="footer-link-post">Post a Listing</button></li>
+              <li><button type="button" data-static-page="pricingGuide" id="footer-link-pricing">Pricing Guide</button></li>
+              <li><button type="button" data-static-page="photoGuide" id="footer-link-photo">Photo Guide</button></li>
+              <li><button type="button" data-static-page="safeSellingGuide" id="footer-link-safe-selling">Safe Selling Guide</button></li>
+            </ul>
+          </div>
+          <div class="footer-column">
+            <h3 id="footer-col-help">Help &amp; Support</h3>
+            <ul>
+              <li><button type="button" data-static-page="helpCenter" id="footer-link-help-center">Help Center</button></li>
+              <li><button type="button" data-static-page="faq" id="footer-link-faq">FAQ</button></li>
+              <li><button type="button" data-static-page="contactSupport" id="footer-link-contact">Contact Support</button></li>
+              <li><button type="button" data-static-page="reportIssue" id="footer-link-report">Report an Issue</button></li>
+            </ul>
+          </div>
+          <div class="footer-column">
+            <h3 id="footer-col-legal">Legal &amp; Trust</h3>
+            <ul>
+              <li><button type="button" data-static-page="privacyPolicy" id="footer-link-privacy">Privacy Policy</button></li>
+              <li><button type="button" data-static-page="termsOfService" id="footer-link-terms">Terms of Service</button></li>
+              <li><button type="button" data-static-page="cookiePolicy" id="footer-link-cookies">Cookie Policy</button></li>
+              <li><button type="button" data-static-page="dataSubjectRights" id="footer-link-dsr">Data Subject Rights</button></li>
+            </ul>
+          </div>
+          <div class="footer-column">
+            <h3 id="footer-col-company">Company</h3>
+            <ul>
+              <li><button type="button" data-static-page="aboutMicany" id="footer-link-micany">Micany Investment</button></li>
+              <li><button type="button" data-static-page="contentModeration" id="footer-link-moderation">Content &amp; Moderation</button></li>
+              <li><button type="button" data-static-page="dataSafety" id="footer-link-data-safety">Data Safety</button></li>
+              <li><button type="button" data-static-page="boostAds" id="footer-link-boost">Boost Your Ads</button></li>
+            </ul>
+          </div>
+        </nav>
+      </div>
+
+      <div class="footer-countries">
+        <h3 id="footer-countries-title">Browse by country</h3>
+        <div class="footer-country-flags" id="footer-country-flags"></div>
+      </div>
+
+      <div class="footer-bottom">
+        <p id="footer-copyright">© 2026 FindNord — a branch of Micany Investment. All rights reserved.</p>
+      </div>
+    </footer>
+
+    <div class="cookie-banner" id="cookie-banner" role="region" aria-label="Cookie notice" hidden>
+      <p id="cookie-banner-text">We use cookies to keep you signed in, secure your account, and understand how the marketplace is used. You can change your choices any time.</p>
+      <div class="cookie-banner-actions">
+        <button type="button" class="secondary-action" id="cookie-settings-button">Cookie Settings</button>
+        <button type="button" class="confirm-button" id="cookie-accept-button">Accept</button>
+      </div>
+    </div>
 
     <nav class="bottom-nav" aria-label="Primary navigation">
       <button class="nav-item active" type="button" data-view="browse-view">
@@ -389,11 +587,67 @@
           <input id="auth-email-input" type="email" placeholder="you@example.com" autocomplete="email" />
           <label class="field-label" for="auth-password-input" id="auth-password-label">Password</label>
           <input id="auth-password-input" type="password" autocomplete="current-password" />
+          <!-- NM-A23: same toggle rule as login-forgot-link above. -->
+          <button type="button" class="link-button" id="auth-forgot-link">Forgot password?</button>
           <p class="auth-error" id="auth-error" role="alert" aria-live="assertive" hidden></p>
           <button type="submit" class="modal-continue-button" id="auth-continue-button">Log in</button>
         </form>
         <button type="button" class="link-button" id="auth-mode-toggle">New to FindNord? Create an account</button>
         <button type="button" class="opener modal-guest-button" id="auth-guest-button">Continue as Guest</button>
+      </div>
+    </div>
+
+    <!-- NM-A23: password reset, requirement 6 -- a request-reset form (email
+         in, always the same generic confirmation out, matching the
+         server's own always-200 /forgot-password contract). Opened from
+         either "Forgot password?" link above. -->
+    <div class="modal-backdrop" id="forgot-password-modal" hidden role="dialog" aria-modal="true" aria-labelledby="forgot-password-modal-title">
+      <div class="modal-sheet">
+        <button type="button" class="modal-close" id="forgot-password-modal-close" aria-label="Close">×</button>
+        <h2 id="forgot-password-modal-title">Reset your password</h2>
+        <p id="forgot-password-modal-body">Enter your account email and we'll send a reset link.</p>
+        <form id="forgot-password-form">
+          <label class="field-label" for="forgot-password-email-input" id="forgot-password-email-label">Email</label>
+          <input id="forgot-password-email-input" type="email" placeholder="you@example.com" autocomplete="email" />
+          <button type="submit" class="modal-continue-button" id="forgot-password-submit-button">Send reset link</button>
+        </form>
+        <!-- NM-A23: deliberately OUTSIDE the form -- reset-password-modal's
+             own form gets hidden on success (see handleResetPasswordSubmit)
+             to stop a resubmit, and a message nested INSIDE a hidden form
+             would be hidden right along with it. Kept consistent here too
+             even though this form never hides, so both modals share one
+             message-placement pattern rather than two different ones. -->
+        <p class="auth-error" id="forgot-password-error" role="alert" aria-live="assertive" hidden></p>
+        <p class="auth-success" id="forgot-password-success" role="status" aria-live="polite" hidden></p>
+      </div>
+    </div>
+
+    <!-- NM-A23 / NM-A25: reached via a real route, `/reset-password/:token`
+         (see app.js's parseRoute/applyRoute and scripts/server.js's matching
+         catch-all) -- the token arrives in an emailed/console-logged link's
+         path segment, not a query string. NM-A23 originally read this out of
+         `?resetToken=...` at bootstrap as a deliberate stopgap ahead of real
+         client-side routing; NM-A25 replaced that special case with the same
+         routing mechanism every other deep link (`/listing/:id`,
+         `/profile/:id`, `/page/:slug`) now goes through. -->
+    <div class="modal-backdrop" id="reset-password-modal" hidden role="dialog" aria-modal="true" aria-labelledby="reset-password-modal-title">
+      <div class="modal-sheet">
+        <button type="button" class="modal-close" id="reset-password-modal-close" aria-label="Close">×</button>
+        <h2 id="reset-password-modal-title">Set a new password</h2>
+        <p id="reset-password-modal-body">Choose a new password for your account.</p>
+        <form id="reset-password-form">
+          <label class="field-label" for="reset-password-input" id="reset-password-label">New password</label>
+          <input id="reset-password-input" type="password" autocomplete="new-password" />
+          <button type="submit" class="modal-continue-button" id="reset-password-submit-button">Set new password</button>
+        </form>
+        <!-- NM-A23: OUTSIDE the form on purpose -- handleResetPasswordSubmit
+             hides the whole form on a real success (to stop it being
+             resubmitted), and a success message nested INSIDE that form
+             would be hidden right along with it, defeating the point of
+             showing a confirmation at all. A real bug this exact shape
+             caught during Playwright verification, not a hypothetical. -->
+        <p class="auth-error" id="reset-password-error" role="alert" aria-live="assertive" hidden></p>
+        <p class="auth-success" id="reset-password-success" role="status" aria-live="polite" hidden></p>
       </div>
     </div>
 
@@ -405,7 +659,28 @@
         <textarea id="compose-message-input" rows="4"></textarea>
         <div class="modal-actions">
           <button type="button" class="secondary-action" id="compose-cancel-button">Cancel</button>
-          <button type="button" class="publish-button" id="compose-send-button">Send</button>
+          <button type="button" class="confirm-button" id="compose-send-button">Send</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- NM-A20: a real Report modal (reason + optional details), replacing
+         the old single-click "Report" that recorded nothing about WHY --
+         reused for both a listing report and a user report via
+         #report-target-type/#report-target-id, set by openReportModal(). -->
+    <div class="modal-backdrop" id="report-modal" hidden role="dialog" aria-modal="true" aria-labelledby="report-modal-title">
+      <div class="modal-sheet">
+        <button type="button" class="modal-close" id="report-modal-close" aria-label="Close">×</button>
+        <h2 id="report-modal-title">Report</h2>
+        <p id="report-modal-body">Tell us what's wrong. Reports are reviewed by the FindNord team.</p>
+        <label class="field-label" for="report-reason-select" id="report-reason-label">Reason</label>
+        <select id="report-reason-select"></select>
+        <label class="field-label" for="report-details-input" id="report-details-label">Details (optional)</label>
+        <textarea id="report-details-input" rows="3" placeholder="Any specifics that would help us review this"></textarea>
+        <p class="auth-error" id="report-error" role="alert" aria-live="assertive" hidden></p>
+        <div class="modal-actions">
+          <button type="button" class="secondary-action" id="report-cancel-button">Cancel</button>
+          <button type="button" class="publish-button" id="report-submit-button">Submit report</button>
         </div>
       </div>
     </div>
@@ -425,7 +700,7 @@
           </select>
         </div>
 
-        <div class="sell-row">
+        <div class="sell-row sell-row-split">
           <div class="sell-field">
             <label class="field-label" for="filter-price-min" id="filter-price-min-label">Min price</label>
             <input id="filter-price-min" type="number" min="0" inputmode="numeric" placeholder="0" />
@@ -483,9 +758,21 @@
       </div>
     </div>
 
+    <!-- NM-A18: Boost / Premium package selection. Body is entirely
+         JS-rendered (boostSheetBodyTemplate), since its content depends on
+         both the real BOOST_PAYMENTS_ENABLED flag and this listing's
+         current boost state. -->
+    <div class="modal-backdrop" id="boost-sheet" hidden role="dialog" aria-modal="true" aria-labelledby="boost-sheet-title">
+      <div class="modal-sheet">
+        <button type="button" class="modal-close" id="boost-sheet-close" aria-label="Close">×</button>
+        <h2 id="boost-sheet-title">Boost this listing</h2>
+        <div id="boost-sheet-body"></div>
+      </div>
+    </div>
+
     <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
-    <script src="data-service.js"></script>
-    <script src="app.js"></script>
+    <script src="/data-service.js"></script>
+    <script src="/app.js"></script>
   </body>
 </html>

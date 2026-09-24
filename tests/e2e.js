@@ -1,3 +1,8 @@
+// NM-A21: must be set before scripts/auth.js is first required anywhere
+// below (its own ADMIN_EMAIL constant is read once, at module-load time) --
+// this is the one, real, designated test admin account for the whole suite.
+process.env.ADMIN_EMAIL = "nma21-admin@example.com";
+
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -5,6 +10,7 @@ const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
 const { startServer } = require("../scripts/server");
+const { resetRateLimiterState } = require("../scripts/rate-limit");
 
 const root = path.resolve(__dirname, "..");
 const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
@@ -149,7 +155,30 @@ assert.match(js, /const REGION_COORDS = {/);
 // controls rendered as bare, unstyled native browser form elements) ---
 assert.match(css, /\.filter-sheet-body input\[type="text"\][\s\S]*?border-radius: 12px;/);
 assert.match(css, /#sell-form select,\s*\n\.filter-sheet-body select\s*{\s*\n\s*appearance: none;/, "native <select> chrome must be replaced with a custom flat chevron");
-assert.match(css, /\.scope,\s*\n\.chip\s*{[^}]*border-radius: 999px;/, "condition/seller-type/category chips must be full pills, not rounded rectangles");
+assert.match(css, /\.chip\s*{\s*\n\s*border-radius: var\(--pill-radius\);/, "condition/seller-type/category chips must be full pills, not rounded rectangles");
+// A real user-reported regression: .scope (Nearby/Country/All Nordics) had
+// drifted onto the same pill radius as .chip, making it look
+// oversized/oval right next to the rectangular location button beside it.
+// It must use the shared rectangular control radius instead, not a pill.
+assert.match(css, /\.scope\s*{\s*\n\s*border-radius: var\(--control-radius\);/);
+assert.doesNotMatch(css, /\.scope\s*{\s*\n\s*border-radius: var\(--pill-radius\)/, "the scope buttons must not be pill-shaped");
+
+// A second real, user-reported regression on the same row: .location-strip's
+// own `align-items: stretch` (needed so its .scope-tabs container matches
+// #location-button's full two-line height) was ALSO stretching each
+// individual .scope button inside that container to that same tall height,
+// via flex's default align-items: stretch -- a single line of text
+// ("Nearby") sitting in an oversized box next to the location button.
+assert.match(css, /\.scope-tabs\s*{\s*\n\s*align-items: center;/, "the scope buttons themselves must be centered (their own compact height), not stretched to match the taller location button beside them");
+
+// A real, user-reported 320px-width regression: Min/Max price shared
+// .sell-row's default 1fr/auto columns (sized for the Sell form's
+// Price+Free-toggle row, where the second column is meant to stay compact)
+// -- at narrow widths this let Max price's own content squeeze Min price
+// down to almost nothing. A dedicated equal-split modifier fixes it without
+// touching the Price+Free-toggle row's own (intentionally asymmetric) layout.
+assert.match(html, /class="sell-row sell-row-split"/, "the Min/Max price row must opt into the equal-split layout");
+assert.match(css, /\.sell-row-split\s*{\s*\n\s*grid-template-columns: 1fr 1fr;/);
 
 // --- NM-A2 mobile QA hardening ---
 assert.match(html, /name="viewport" content="width=device-width, initial-scale=1\.0"/);
@@ -217,7 +246,15 @@ assert.match(css, /\.chip-carousel-arrow\s*{\s*\n\s*display: none;\s*\n\s*}/, "a
 // --- NM-A3: i18n groundwork (mechanism + persistence + fallback are real; sv is fully translated) ---
 assert.match(js, /const translations = {/);
 assert.match(js, /sv: {/);
-assert.match(js, /no: {},\s*\n\s*da: {},\s*\n\s*fi: {},\s*\n\s*is: {}/);
+// NM-A26: no/da/fi/is used to be empty {} stubs (falling back entirely to
+// English); they are now real, fully-populated dictionaries. Assert the old
+// stub shape is GONE (a real regression guard -- this exact pattern is what
+// this test used to require) and that all 4 real language blocks now exist
+// with real content, not empty objects.
+assert.doesNotMatch(js, /no: \{\},\s*\n\s*da: \{\},\s*\n\s*fi: \{\},\s*\n\s*is: \{\}/, "no/da/fi/is must no longer be empty stub objects");
+["no", "da", "fi", "is"].forEach((lang) => {
+  assert.match(js, new RegExp(`${lang}: \\{\\s*\\n\\s*"brand\\.eyebrow": "[^"]+",`), `translations.${lang} must be a real, populated object starting with a real brand.eyebrow value, not empty`);
+});
 assert.match(js, /function t\(key, lang\)/);
 assert.match(js, /function setLanguage\(lang\)/);
 assert.match(js, /localStorage/);
@@ -352,11 +389,16 @@ assert.match(js, /await DataService\.reports\.create\(/);
 assert.match(js, /await DataService\.conversations\.startOrGet\(/);
 assert.match(js, /await DataService\.conversations\.addMessage\(/);
 assert.match(js, /async function bootstrap\(\)/);
-assert.match(html, /<script src="data-service\.js"><\/script>\s*\n\s*<script src="app\.js">/, "data-service.js must load before app.js");
+// NM-A25: both are now root-relative (see this slice's own assertion on
+// that below) -- the ORDER requirement (data-service.js before app.js)
+// still holds unchanged.
+assert.match(html, /<script src="\/data-service\.js"><\/script>\s*\n\s*<script src="\/app\.js">/, "data-service.js must load before app.js");
 
 // --- Dedicated Login/Sign-up page (accessible from You, not just the interrupted-action modal) ---
 assert.match(html, /id="login-view"/);
-assert.match(html, /src="assets\/login-hero\.png"/, "the user's own illustration must be used as the login hero image");
+// NM-A25: root-relative now (see this slice's own assertion below) -- a
+// relative "assets/login-hero.png" 404s once served one path segment deep.
+assert.match(html, /src="\/assets\/login-hero\.png"/, "the user's own illustration must be used as the login hero image");
 assert.match(html, /id="login-form"/);
 assert.match(html, /id="login-email-input"/);
 assert.match(html, /id="login-guest-button"/);
@@ -412,8 +454,8 @@ assert.match(dataServiceJs, /conversations: \{[\s\S]*?getAll\(\)/, "Analytics ne
 assert.match(js, /function renderProfileAvatar\(\)/);
 assert.match(js, /function renderAccountActions\(\)/);
 assert.match(js, /function getMyListings\(\)/);
-assert.match(js, /async function toggleBoost\(listingId\)/);
-assert.match(js, /listing\.sellerId !== currentUser\.id/, "boosting must check real ownership, not just whether someone is signed in");
+assert.match(js, /function openBoostSheet\(listingId\)/);
+assert.match(js, /if \(!listing \|\| !currentUser \|\| listing\.sellerId !== currentUser\.id\) return;/, "boosting must check real ownership, not just whether someone is signed in");
 assert.match(js, /async function renderAnalytics\(\)/);
 // NM-A14: sellerId is no longer sent by the client at all -- the server
 // derives it from the real session (see the apiJs assertion below) so a
@@ -441,7 +483,7 @@ assert.match(fs.readFileSync(path.join(root, "package.json"), "utf8"), /"better-
 assert.match(fs.readFileSync(path.join(root, "package.json"), "utf8"), /"express":/);
 
 const schemaSql = fs.readFileSync(path.join(root, "db", "schema.sql"), "utf8");
-["users", "listings", "listing_images", "conversations", "conversation_participants", "messages", "saved_items", "reports"].forEach((table) => {
+["users", "listings", "listing_images", "conversations", "conversation_participants", "messages", "saved_items", "reports", "password_reset_tokens"].forEach((table) => {
   assert.match(schemaSql, new RegExp(`CREATE TABLE IF NOT EXISTS ${table} `), `schema must define the ${table} table`);
 });
 
@@ -454,6 +496,15 @@ assert.match(dbJs, /function openDatabase\(dbPath, options = \{\}\)/);
 assert.match(dbJs, /function seedIfEmpty\(db\)/, "first run must migrate the seed data into real rows");
 assert.match(dbJs, /require\("better-sqlite3"\)/);
 
+// Deployment-readiness audit finding: seedIfEmpty used to run unconditionally,
+// so a genuinely empty PRODUCTION database would get silently filled with
+// fake demo listings on first boot. Gated on NODE_ENV=production (default:
+// still seed, same as always -- local dev/tests never set it).
+assert.match(dbJs, /function shouldSeedDemoData\(\) \{\s*\n\s*if \(process\.env\.NODE_ENV !== "production"\) return true;\s*\n\s*return process\.env\.SEED_DEMO_DATA === "true";/, "seeding must default ON everywhere except a real NODE_ENV=production deploy, which needs an explicit SEED_DEMO_DATA=true opt-in");
+assert.match(dbJs, /if \(!shouldSeedDemoData\(\)\) return;/, "seedIfEmpty must actually consult the gate before touching the listings table");
+
+assert.match(schemaSql, /CREATE INDEX IF NOT EXISTS idx_listings_seller_id ON listings\(seller_id\);/, "public profile views filter listings by seller_id on every request and need a real index");
+
 const apiJs = fs.readFileSync(path.join(root, "scripts", "api.js"), "utf8");
 [
   ["get", "/categories"],
@@ -463,11 +514,81 @@ const apiJs = fs.readFileSync(path.join(root, "scripts", "api.js"), "utf8");
   ["post", "/saved-items/toggle"],
   ["get", "/saved-items/all"],
   ["post", "/reports"],
+  ["get", "/reports"],
+  ["post", "/blocks"],
+  ["delete", "/blocks/:userId"],
+  ["get", "/blocks"],
   ["post", "/conversations/start-or-get"],
   ["post", "/conversations/:id/messages"]
 ].forEach(([method, routePath]) => {
   assert.match(apiJs, new RegExp(`router\\.${method}\\("${routePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`), `API must expose ${method.toUpperCase()} ${routePath}`);
 });
+
+// --- NM-A20: Trust & Safety Content + Report / Block Flows ---
+assert.match(schemaSql, /reported_user_id TEXT/, "reports must be able to target a user, not only a listing");
+assert.match(schemaSql, /status TEXT NOT NULL DEFAULT 'open'/, "reports need a real status field -- 'a simple internal structure... an admin could later review'");
+assert.match(schemaSql, /CREATE TABLE IF NOT EXISTS blocks/);
+assert.match(dbJs, /function migrateReportsColumns\(db\)/);
+assert.match(dbJs, /migrateReportsColumns\(db\);/);
+
+assert.match(apiJs, /const REPORT_REASONS = new Set\(/, "report reasons must be a real, closed, defined set");
+assert.match(apiJs, /function isBlockedPair\(db, userIdA, userIdB\)/);
+assert.match(apiJs, /REPORT_TARGET_REQUIRED/);
+assert.match(apiJs, /REPORT_NOT_FOR_SELF/);
+assert.match(apiJs, /INSERT OR IGNORE INTO blocks/, "blocking the same user twice must be a safe no-op, not an error");
+assert.match(apiJs, /router\.delete\("\/blocks\/:userId"/);
+assert.doesNotMatch(apiJs, /INSERT INTO reports \(id, listing_id, reporter_id, created_at\) VALUES \(\?, \?, \?, \?\)/, "the old reason-less report insert must be gone");
+
+assert.match(js, /function openReportModal\(targetType, targetId\)/);
+assert.match(js, /function toggleBlockUser\(userId\)/);
+assert.match(js, /function conversationOtherPartyId\(conversation\)/);
+assert.match(js, /let blockedUserIds = new Set\(\);/);
+assert.match(js, /async function refreshBlockedUsersCache\(\)/);
+assert.match(js, /const notBlockedSeller = !listing\.sellerId \|\| !blockedUserIds\.has\(listing\.sellerId\);/, "Browse must genuinely filter out a blocked seller's listings, not just hide a button");
+assert.match(html, /id="report-modal"/, "Report must be a real modal (reason + optional details), not a single instant click");
+assert.doesNotMatch(js, /await DataService\.reports\.create\(\{ listingId: id, reporterId: currentUser \? currentUser\.id : null \}\);/, "the old reason-less, instant-fire report call must be gone");
+
+// --- NM-A21: Minimal Admin Moderation Queue (Internal) ---
+assert.match(schemaSql, /is_admin INTEGER NOT NULL DEFAULT 0/, "admin must be a real, per-user column, not derived live from an env var on every request");
+assert.match(schemaSql, /flagged INTEGER NOT NULL DEFAULT 0/);
+assert.match(schemaSql, /admin_hidden INTEGER NOT NULL DEFAULT 0/, "admin-hide must be its own column, separate from the seller-controlled status column");
+assert.match(dbJs, /function migrateUsersContactAndAdminColumns\(db\)/);
+assert.match(dbJs, /function migrateListingsAdminHiddenColumn\(db\)/);
+assert.match(dbJs, /migrateUsersContactAndAdminColumns\(db\);/);
+assert.match(dbJs, /migrateListingsAdminHiddenColumn\(db\);/);
+
+// (auth.js-dependent admin/settings assertions live further below, right
+// after authJs itself is read from disk -- see "NM-A21: admin/settings
+// auth-layer pieces".)
+
+assert.match(apiJs, /router\.get\("\/reports", requireAdmin/, "the report queue must be admin-only -- this used to have NO access control at all");
+assert.match(apiJs, /router\.patch\("\/reports\/:id", requireAdmin/);
+assert.match(apiJs, /router\.post\("\/admin\/listings\/:id\/hide", requireAdmin/);
+assert.match(apiJs, /router\.post\("\/admin\/listings\/:id\/unhide", requireAdmin/);
+assert.match(apiJs, /router\.post\("\/admin\/users\/:id\/flag", requireAdmin/);
+assert.match(apiJs, /router\.post\("\/admin\/users\/:id\/unflag", requireAdmin/);
+assert.match(apiJs, /adminHidden: Boolean\(row\.admin_hidden\)/);
+
+assert.match(js, /function openAdminQueue\(\)/);
+assert.match(js, /if \(!currentUser \|\| !currentUser\.isAdmin\)/, "the client-side check must be a real defense-in-depth gate, even though the server is the real one");
+assert.match(js, /const notAdminHidden = !listing\.adminHidden;/, "Browse must genuinely exclude an admin-hidden listing for everyone, not just mark it");
+assert.match(js, /function renderSettings\(\)/);
+assert.match(js, /async function saveSettings\(\)/);
+assert.match(js, /document\.getElementById\("settings-save-button"\)\.addEventListener\("click", saveSettings\);/, "Settings' Save button listener must be bound once");
+{
+  const renderSettingsMatch = /function renderSettings\(\) \{([\s\S]*?)\n}/.exec(js);
+  assert.ok(renderSettingsMatch, "renderSettings must exist");
+  assert.doesNotMatch(renderSettingsMatch[1], /addEventListener/, "renderSettings() must never bind a fresh listener on every render -- that belongs in bindEvents(), once, like every other static form in this app");
+}
+assert.match(html, /id="admin-view"/, "the moderation queue needs its own dedicated, real view");
+assert.doesNotMatch(html, /data-view="admin-view"/, "the admin nav entry must only ever be built dynamically in JS (conditional on isAdmin), never present in the static HTML every visitor's page loads");
+assert.match(js, /const adminAction = currentUser\.isAdmin/, "the admin nav entry markup itself must be conditional on isAdmin, not always rendered and merely hidden via CSS");
+
+// --- NM-A22: Final Parity Pass + Honest Re-audit -- two small fixes found
+// by re-verifying real current behavior instead of trusting old write-ups. ---
+assert.match(js, /const isOwnListing = Boolean\(currentUser && listing\.sellerId && listing\.sellerId === currentUser\.id\);/, "the detail page must know whether the viewer owns the listing, to hide self-messaging");
+assert.match(js, /function conversationOtherPartyLabel\(listing\)/);
+assert.doesNotMatch(js, /const seller = listing \? listing\.seller : "";/, "the old inbox row must no longer show the raw listing.seller unconditionally -- that's the exact self-name bug this slice fixes");
 
 // --- NM-A16: Public Seller Profiles ---
 assert.match(html, /id="profile-view"/, "seller profiles need a dedicated public view shell");
@@ -482,6 +603,118 @@ assert.match(js, /profile\.unverifiedBadge/, "the required verification placehol
 assert.match(css, /\.seller-name-link\s*{[\s\S]*?color: var\(--country-primary\);/, "seller profile links must use the FindNord blue, not oversized button styling");
 assert.match(css, /\.verified-badge\.unverified\s*{[\s\S]*?background: #edf2ed;/, "unverified placeholder must be quiet, not a full verification badge");
 
+// --- NM-A17: Reviews, Ratings & Basic Verification Signals ---
+const reviewModerationJs = fs.readFileSync(path.join(root, "scripts", "review-moderation.js"), "utf8");
+assert.match(reviewModerationJs, /function cleanReviewText\(text\)/);
+assert.match(reviewModerationJs, /new RegExp\(`\\\\b\$\{word\}\\\\w\*`, "gi"\)/, "the filter must catch inflected forms (e.g. \"fucking\"), not just the bare blocked word");
+assert.doesNotMatch(reviewModerationJs, /require\(["'](?:bad-words|profanity)["']\)/, "no new npm dependency for the abuse filter");
+assert.match(schemaSql, /review_strikes INTEGER NOT NULL DEFAULT 0/);
+assert.match(schemaSql, /review_banned INTEGER NOT NULL DEFAULT 0/);
+assert.match(dbJs, /function migrateUsersReviewModerationColumns\(db\)/);
+assert.match(apiJs, /const \{ cleanReviewText \} = require\("\.\/review-moderation"\);/);
+assert.match(apiJs, /const REVIEW_BAN_STRIKE_THRESHOLD = 2;/);
+assert.match(apiJs, /reviewerAccount && reviewerAccount\.review_banned/, "an already-banned account must be rejected before its content is even inspected");
+assert.match(apiJs, /newStrikes >= REVIEW_BAN_STRIKE_THRESHOLD/);
+assert.match(apiJs, /code: "REVIEW_BANNED_NOW"/);
+assert.match(apiJs, /code: "REVIEW_BANNED"/);
+assert.match(apiJs, /code: "DUPLICATE_REVIEW"/);
+assert.match(apiJs, /res\.status\(201\)\.json\(\{ \.\.\.rowToReview\(row\), moderated \}\);/);
+
+// The submission path must be fully wired -- no temporary/disabled/dead state left over.
+assert.match(js, /const submitReviewButton = event\.target\.closest\("\[data-submit-review\]"\);/, "the review submit button must be wired into the delegated click handler");
+assert.match(js, /if \(submitReviewButton\) handleReviewSubmitClick\(submitReviewButton\.dataset\.submitReview\);/);
+assert.doesNotMatch(
+  js,
+  /class="review-rating-select"\$\{disabled\}|class="review-text-input"[^>]*\$\{disabled\}/,
+  "the rating/text inputs must not be pre-disabled for guests -- requireAuth gates on submit and resumes with what they actually typed, same as Save/Message"
+);
+assert.match(js, /showToast\(t\(review\.moderated \? "review\.warningModerated" : "review\.posted"\)\);/, "a moderated (cleaned) review must still visibly warn the writer, not silently succeed");
+assert.match(js, /"REVIEW_BANNED_NOW" \? "review\.bannedNow"/);
+
+// --- Site footer, static content pages, and cookie notice ---
+assert.match(html, /<footer class="site-footer" aria-label="Site footer">/);
+assert.match(html, /id="cookie-banner" role="region" aria-label="Cookie notice" hidden/);
+assert.match(html, /id="static-page-view"/);
+assert.match(html, /id="static-page-content"/);
+assert.match(html, /id="footer-country-flags"/);
+["about", "howItWorks", "safetyTips", "pricingGuide", "photoGuide", "safeSellingGuide", "helpCenter", "faq", "contactSupport", "reportIssue", "boostAds", "contentModeration", "dataSafety", "aboutMicany", "privacyPolicy", "dataSubjectRights", "termsOfService", "cookiePolicy"].forEach(
+  (pageId) => {
+    assert.match(js, new RegExp(`${pageId}: \\{`), `STATIC_PAGES must define real content for "${pageId}", not a dead footer link`);
+  }
+);
+assert.match(js, /function openStaticPage\(pageId\)/);
+assert.match(js, /function renderFooterCountryFlags\(\)/);
+assert.match(js, /function handleFooterCountryClick\(country\)/);
+assert.match(js, /function initCookieBanner\(\)/);
+assert.match(js, /function dismissCookieBanner\(\)/);
+assert.match(js, /const staticPageButton = event\.target\.closest\("\[data-static-page\]"\);/);
+// NM-A25: static pages now get a real `/page/:slug` URL -- the delegated
+// click handler routes through navigateToStaticPage() (pushState + the
+// unchanged openStaticPage()), not openStaticPage() directly.
+assert.match(js, /if \(staticPageButton\) navigateToStaticPage\(staticPageButton\.dataset\.staticPage\);/);
+assert.match(js, /listing\.sellerId \? "" : `<p>\$\{escapeHtml\(listing\.trust\)\}<\/p>`/, "a real seller's stale generic trust text must be suppressed now that real trust signals exist");
+assert.match(css, /\.site-footer\s*{/);
+assert.match(css, /\.cookie-banner\s*{/);
+assert.doesNotMatch(css, /\.cookie-banner\s*{[^}]*position: fixed;/, "the cookie banner must not fight the already-crowded fixed bottom-nav/CTA-bar real estate on mobile");
+
+// --- NM-A18: Monetization Foundation -- Boost / Premium ---
+const boostJs = fs.readFileSync(path.join(root, "scripts", "boost.js"), "utf8");
+assert.match(boostJs, /const BOOST_PACKAGES = \[/);
+["24h", "7d", "30d", "6m", "12m"].forEach((packageId) => {
+  assert.match(boostJs, new RegExp(`id: "${packageId}"`), `the PRD's ${packageId} package must be a real, defined package`);
+});
+assert.match(boostJs, /function isBoostPaymentsEnabled\(\) \{\s*\n\s*return process\.env\.BOOST_PAYMENTS_ENABLED === "true";/, "the payments flag must be a real env var, defaulting OFF for any unset deployment");
+assert.match(boostJs, /async function createBoostCheckoutSession/);
+assert.match(boostJs, /https:\/\/api\.stripe\.com\/v1\/checkout\/sessions/, "the checkout integration must target Stripe's real API, not a fake stub URL");
+assert.match(boostJs, /function verifyStripeWebhookSignature/);
+assert.match(boostJs, /crypto\.timingSafeEqual/, "webhook signature comparison must be constant-time");
+assert.doesNotMatch(boostJs, /require\(["']stripe["']\)/, "no new npm dependency -- Stripe's REST API is called directly via fetch, same instinct as NM-A15's hand-rolled JWT verification");
+
+assert.match(apiJs, /router\.get\("\/boost\/config"/);
+assert.match(apiJs, /router\.post\("\/listings\/:id\/boost", requireSession/);
+assert.match(apiJs, /router\.post\("\/listings\/:id\/unboost", requireSession/);
+assert.match(apiJs, /router\.post\("\/listings\/:id\/boost\/checkout", requireSession/);
+assert.match(apiJs, /router\.post\("\/boost\/stripe-webhook", express\.raw\(\{ type: "application\/json" \}\)/, "the webhook must receive the RAW body, not JSON-parsed, for signature verification");
+assert.match(apiJs, /code: "PAYMENT_REQUIRED"/, "direct free activation must be blocked once payments are enabled, not silently still work");
+assert.match(apiJs, /sponsored: Boolean\(row\.boost_expires_at && row\.boost_expires_at > Date\.now\(\)\)/, "sponsored must be derived live from a real expiry, not a static flag that never lapses");
+
+assert.match(schemaSql, /boost_expires_at INTEGER/);
+assert.match(schemaSql, /boost_package TEXT/);
+assert.match(dbJs, /function migrateListingBoostColumns\(db\)/);
+assert.match(dbJs, /WHERE sponsored = 1 AND boost_expires_at IS NULL/, "a pre-NM-A18 permanently-sponsored listing must be grandfathered with a real expiry, not silently unmanaged forever");
+
+assert.match(js, /function openBoostSheet\(listingId\)/);
+assert.match(js, /async function activateBoostPackage\(packageId\)/);
+assert.match(js, /async function cancelActiveBoost\(\)/);
+assert.match(
+  js,
+  /copy\.sort\(\(a, b\) => \{\s*\n\s*const boostRank = Number\(sponsoredRotationIds\.includes\(b\.id\)\) - Number\(sponsoredRotationIds\.includes\(a\.id\)\);/,
+  "the default feed's ranking must give the current rotation's boosted slot-holders a real advantage, not just render a badge"
+);
+assert.doesNotMatch(js, /async function toggleBoost/, "the old binary, non-expiring boost toggle must be fully retired, not left alongside the new system");
+
+// --- NM-A18 follow-up: positional-quota rotation + random fairness segment ---
+assert.match(js, /const SPONSORED_SLOT_COUNT = 4;/);
+assert.match(js, /const FAIRNESS_SPOTLIGHT_COUNT = 4;/);
+assert.match(js, /function shuffleArray\(array\)/);
+assert.match(js, /function refreshBoostRotation\(\)/);
+assert.match(js, /async function refreshListingsCache\(\)/);
+assert.match(js, /function fairnessSectionTemplate\(\)/);
+assert.match(js, /function getSponsoredRotationIds\(\)/);
+assert.match(js, /function getFairnessSpotlightIds\(\)/);
+{
+  // Every real (non-comment) listings-cache refresh must go through
+  // refreshListingsCache/refreshBoostRotation, not a bare re-fetch -- a bare
+  // `listings = await DataService.listings.getAll();` line would silently
+  // skip recomputing the rotation and fairness segment. The function's own
+  // implementation line is the one legitimate exception; a doc-comment
+  // mentioning the pattern in backticks is not code, so it's excluded here.
+  const codeOnly = js.replace(/\/\/.*$/gm, "");
+  const rawRefetches = codeOnly.match(/listings = await DataService\.listings\.getAll\(\);/g) || [];
+  assert.strictEqual(rawRefetches.length, 1, "expected exactly one raw listings re-fetch (inside refreshListingsCache itself); every other call site must go through refreshListingsCache()");
+}
+assert.match(dataServiceJs, /boost: \{[\s\S]*?config\(\)[\s\S]*?activate\(listingId, packageId\)[\s\S]*?cancel\(listingId\)[\s\S]*?checkout\(listingId, packageId, returnUrl\)/);
+
 // The frontend's data layer is now a thin, real fetch client -- not the
 // in-memory arrays it replaced -- but keeps the EXACT same public interface
 // (same namespaces, same method names/signatures) so app.js needed zero
@@ -493,6 +726,42 @@ assert.match(dataServiceJs, /await fetch\(`\$\{API_BASE\}\$\{path\}`, options\)/
 assert.doesNotMatch(dataServiceJs, /function resolved\(value\)/, "the old fake-Promise wrapper must be gone -- these are now real network Promises");
 assert.doesNotMatch(dataServiceJs, /let listings = \[/, "listings must no longer live in an in-memory array in the frontend");
 assert.doesNotMatch(dataServiceJs, /persist\("fn_saved_items"/, "saved items are now persisted server-side in SQLite, not localStorage");
+
+// --- NM-A19: Currency, Location Depth & Locale Formatting ---
+assert.match(schemaSql, /country TEXT NOT NULL DEFAULT 'Sweden'/, "every listing must always have a real country, defaulting to Sweden for back-compat");
+assert.match(dbJs, /function migrateListingCountryColumn\(db\)/, "a database created before per-listing country existed must self-heal on startup, like every prior additive column");
+assert.match(dbJs, /migrateListingCountryColumn\(db\);/);
+
+assert.match(apiJs, /const VALID_COUNTRIES = new Set\(\["Sweden", "Norway", "Denmark", "Finland", "Iceland"\]\);/);
+assert.match(apiJs, /const CURRENCY_BY_COUNTRY = \{/, "currency must be a real, defined mapping, not inferred ad hoc");
+assert.match(apiJs, /currency: CURRENCY_BY_COUNTRY\[row\.country\] \|\| "SEK"/, "currency must be DERIVED from country on every read, not a second stored value that could drift out of sync -- the same pattern NM-A18 used for `sponsored`");
+assert.match(apiJs, /country: VALID_COUNTRIES\.has\(fields\.country\) \? fields\.country : "Sweden"/, "an invalid/missing country on create must safely default to Sweden, never be trusted blindly from the client");
+{
+  const updateColumnsMatch = /const LISTING_UPDATE_COLUMNS = \{([\s\S]*?)\};/.exec(apiJs);
+  assert.ok(updateColumnsMatch, "LISTING_UPDATE_COLUMNS must exist");
+  assert.doesNotMatch(updateColumnsMatch[1], /country/, "LISTING_UPDATE_COLUMNS must never whitelist country -- a listing's currency must never change via edit");
+}
+
+assert.equal(
+  (seedDataJs.match(/country: "Sweden",/g) || []).length,
+  8,
+  "every one of the 8 seed listings must carry a real country field"
+);
+
+assert.match(js, /const CURRENCY_BY_COUNTRY = \{/, "the frontend needs its own currency map for Sell-preview/filter-chip formatting before a listing round-trips through the server");
+assert.match(js, /const LOCALE_BY_COUNTRY = \{/);
+assert.match(js, /function formatListingPrice\(listing\)/);
+assert.match(js, /function currencyFormatterForCountry\(country\)/);
+assert.match(js, /new Intl\.NumberFormat\(locale, \{ style: "currency", currency, minimumFractionDigits: 0, maximumFractionDigits: 0 \}\)/, "currency formatting must go through Intl, not hand-built spacing/symbol logic");
+assert.match(js, /function isMonthlyRental\(listing\)/);
+assert.match(js, /function formatRelativeTime\(postedAtMs\)/);
+assert.match(js, /new Intl\.RelativeTimeFormat\(locale, \{ numeric: "auto" \}\)/, "relative time must be a real, live Intl computation, not a frozen stored string");
+assert.match(js, /function pluralCategory\(count, locale\)/);
+assert.match(js, /new Intl\.PluralRules\(locale\)\.select\(count\)/, "pluralization must use real CLDR plural categories, not a hand-rolled === 1 check");
+assert.match(js, /function countLabel\(count, oneKey, otherKey\)/);
+assert.match(js, /function setActiveScope\(scope\)/, "scope switching must be a real, independently-testable function, not only inline in the click-delegation handler");
+assert.match(js, /const matchesScope = activeScope !== "Country" \|\| listing\.country === activeCountry;/, "the Country scope button must genuinely filter by real country, not remain the purely cosmetic label it used to be");
+assert.match(js, /const CAPITAL_REGION_BY_COUNTRY = \{/);
 
 // --- NM-A12: Backend Phase 2 -- real local file storage for images ---
 const imageStorageJs = fs.readFileSync(path.join(root, "scripts", "image-storage.js"), "utf8");
@@ -572,12 +841,37 @@ assert.match(authJs, /router\.post\("\/logout"/);
 assert.match(authJs, /router\.get\("\/me"/);
 assert.match(authJs, /code: "EMAIL_TAKEN"/, "a duplicate registration must be a distinct, recognizable error");
 assert.match(authJs, /code: "INVALID_CREDENTIALS"/, "a wrong password must be a distinct, recognizable error");
-assert.match(authJs, /res\.status\(201\)\.json\(\{ id, name, email \}\);/, "the register response must never echo the password or its hash back");
-assert.match(authJs, /res\.json\(\{ id: user\.id, name: user\.name, email: user\.email \}\);/, "the login response must never echo the password or its hash back");
+// NM-A21: both responses now go through rowToAuthUser(), built from a
+// fresh, explicit SELECT of only (id, name, email, phone, is_admin) --
+// still never the password hash, just via a shared shaping function
+// instead of a hand-typed object literal at each call site.
+assert.match(authJs, /function rowToAuthUser\(row\)/);
+assert.match(authJs, /res\.status\(201\)\.json\(rowToAuthUser\(db\.prepare\("SELECT id, name, email, phone, home_country, home_region, is_admin FROM users WHERE id = \?"\)\.get\(id\)\)\);/, "the register response must never echo the password or its hash back");
+assert.match(authJs, /res\.json\(rowToAuthUser\(db\.prepare\("SELECT id, name, email, phone, home_country, home_region, is_admin FROM users WHERE id = \?"\)\.get\(user\.id\)\)\);/, "the login response must never echo the password or its hash back");
+
+// --- NM-A21: admin/settings auth-layer pieces ---
+assert.match(authJs, /const ADMIN_EMAIL = process\.env\.ADMIN_EMAIL/, "the designated admin must be named by a real env var, the same ops-controlled-setting pattern as every other real flag in this app");
+assert.match(authJs, /function syncAdminFlag\(db, userId, email\)/);
+assert.match(authJs, /function requireAdmin\(req, res, next\)/);
+assert.match(authJs, /ADMIN_REQUIRED/);
+assert.match(authJs, /router\.patch\("\/me", requireSession/, "Settings' phone update must require a real session");
+assert.match(authJs, /PHONE_PATTERN/);
+
+// Deployment-readiness audit finding: the session cookie never set `Secure`.
+// Gated on NODE_ENV=production (same static-regex-on-the-env-flag pattern
+// already used elsewhere in this section, e.g. isBoostPaymentsEnabled below)
+// rather than unconditional, since this suite's own server always runs
+// without it, over plain http://127.0.0.1.
+assert.match(authJs, /const COOKIE_SECURE_SUFFIX = process\.env\.NODE_ENV === "production" \? "; Secure" : "";/, "the session cookie must conditionally set Secure in real production, not just HttpOnly/SameSite");
+assert.match(authJs, /Path=\/; HttpOnly; SameSite=Lax; Max-Age=\$\{maxAgeSeconds\}\$\{COOKIE_SECURE_SUFFIX\}/, "the real session cookie string must include the conditional Secure suffix");
 
 assert.match(serverJsForUploads, /app\.use\(attachSession\(db\)\)/, "every request must get a real session attached");
 assert.match(serverJsForUploads, /app\.use\("\/api\/auth", createAuthRouter\(db\)\)/);
-assert.match(serverJsForUploads, /requireSession, handleGenerateImage/, "the real-money AI proxy must also be gated server-side, not just by the client");
+assert.match(
+  serverJsForUploads,
+  /requireSession,\s*generateImageRateLimiter,\s*handleGenerateImage/,
+  "the real-money AI proxy must also be gated server-side (session + a real per-account rate limiter), not just by the client"
+);
 
 assert.match(apiJs, /router\.post\("\/listings", requireSession/, "publishing requires a real account");
 assert.match(apiJs, /router\.post\("\/saved-items\/toggle", requireSession/, "saving requires a real account");
@@ -642,6 +936,159 @@ assert.match(dataServiceJs, /googleConfig\(\)/);
 // three derived claims (googleId/email/name) are ever written anywhere.
 assert.doesNotMatch(authJs, /INSERT INTO users[\s\S]{0,300}credential/i);
 assert.doesNotMatch(js, /localStorage[\s\S]{0,80}credential/i);
+
+// --- NM-A23: Password Reset / Forgot-Password Flow ---
+const rateLimitJs = fs.readFileSync(path.join(root, "scripts", "rate-limit.js"), "utf8");
+assert.match(rateLimitJs, /function rateLimiter\(options = \{\}\)/, "the rate limiter must be a real, reusable middleware FACTORY, not hardcoded to one route");
+assert.match(rateLimitJs, /function resetRateLimiterState\(\)/);
+assert.doesNotMatch(rateLimitJs, /require\(["'](?:express-rate-limit|rate-limiter-flexible)["']\)/, "no new npm dependency for rate limiting");
+assert.match(
+  fs.readFileSync(path.join(root, "package.json"), "utf8"),
+  /"dependencies": \{\s*\n\s*"better-sqlite3":.*\n\s*"compression":.*\n\s*"express":.*\n\s*\}/,
+  "NM-A23 itself added no npm dependency (compression was added later, by the deployment-readiness Phase 0 work -- see DEPLOYMENT_READINESS_PLAN.md)"
+);
+
+assert.match(schemaSql, /CREATE TABLE IF NOT EXISTS password_reset_tokens/);
+assert.match(schemaSql, /used_at INTEGER/, "a reset token needs a real used_at column for single-use enforcement");
+
+assert.match(authJs, /require\("\.\/rate-limit"\)/);
+assert.match(authJs, /function createPasswordResetToken\(db, userId\)/);
+assert.match(authJs, /function sendResetEmail\(email, resetUrl\)/, "the no-real-email-provider seam must be its own named function, not an inline console.log");
+assert.match(authJs, /\[FindNord\] Password reset requested for/, "the console log label must match the required, clearly-labeled format");
+assert.match(authJs, /router\.post\("\/forgot-password", forgotPasswordRateLimiter/);
+assert.match(authJs, /router\.post\("\/reset-password", resetPasswordRateLimiter/);
+assert.match(authJs, /router\.post\("\/login", loginRateLimiter/, "login must be rate-limited too");
+assert.match(authJs, /router\.post\("\/register", registerRateLimiter/, "register must be rate-limited too");
+assert.match(authJs, /code: "INVALID_RESET_TOKEN"/);
+assert.match(authJs, /code: "RESET_TOKEN_EXPIRED"/);
+assert.match(authJs, /code: "RESET_TOKEN_USED"/);
+assert.match(authJs, /code: "GOOGLE_ACCOUNT_NO_PASSWORD"/, "a Google-only account must get its own distinct, honest error code");
+assert.match(authJs, /if \(!user\.password_hash\) {/, "the Google-only check must be the real password_hash column, not a client-supplied flag");
+assert.match(authJs, /DELETE FROM sessions WHERE user_id = \?/, "a real password reset must kill every existing session for that user, everywhere");
+// The forgot-password response itself must never branch on whether the
+// account exists -- this asserts the literal response shape is unconditional.
+{
+  const forgotRouteMatch = /router\.post\("\/forgot-password", forgotPasswordRateLimiter, \(req, res\) => \{([\s\S]*?)\n {2}\}\);/.exec(authJs);
+  assert.ok(forgotRouteMatch, "the forgot-password route must exist");
+  assert.match(forgotRouteMatch[1], /res\.status\(200\)\.json\(\{ message: "If that email exists, we've sent a reset link\." \}\);/, "the final response line must run unconditionally, not inside the if(user) branch");
+  assert.doesNotMatch(forgotRouteMatch[1], /res\.status\(40[0-9]\)/, "forgot-password must never return a 4xx for any input shape -- that would itself leak account existence");
+}
+
+assert.match(dataServiceJs, /requestPasswordReset\(email\)/);
+assert.match(dataServiceJs, /resetPassword\(token, password\)/);
+
+assert.match(html, /id="forgot-password-modal"/);
+assert.match(html, /id="reset-password-modal"/);
+assert.match(html, /id="auth-forgot-link"/, "the sign-in modal needs a real Forgot password link");
+assert.match(html, /id="login-forgot-link"/, "the dedicated Login page needs one too");
+assert.match(html, /id="forgot-password-email-input" type="email"/);
+assert.match(html, /id="reset-password-input" type="password"/);
+assert.match(css, /\.auth-success\s*{/);
+
+assert.match(js, /function openForgotPasswordModal\(\)/);
+assert.match(js, /function closeForgotPasswordModal\(\)/);
+assert.match(js, /async function handleForgotPasswordSubmit\(event\)/);
+assert.match(js, /function openResetPasswordModal\(token\)/, "the token must be passed explicitly (not read back off a module variable set from outside) -- also what makes this callable correctly from a vm-sandboxed test");
+assert.match(js, /function closeResetPasswordModal\(\)/);
+assert.match(js, /async function handleResetPasswordSubmit\(event\)/);
+assert.match(js, /let pendingResetToken = null;/);
+// NM-A25: replaces NM-A23's own `?resetToken=` query-string stopgap -- the
+// real bootstrap-time route read must use the same defensive guard every
+// other real window/window.location access in this file uses, and must go
+// through the same parseRoute()/applyRoute() mechanism every other deep
+// link (listing/profile/static page) uses, not a special-cased read of its
+// own.
+assert.match(js, /if \(typeof window !== "undefined" && window\.location\) \{\s*(?:\/\/[^\n]*\n\s*)*await applyRoute\(parseRoute\(window\.location\.pathname\)\);/);
+assert.doesNotMatch(js, /new URLSearchParams\(window\.location\.search\)/, "must not depend on URLSearchParams -- unavailable in this app's own bare vm test sandbox");
+assert.match(js, /function parseRoute\(pathname\)/);
+assert.match(js, /function applyRoute\(route\)/);
+assert.match(js, /function navigateToListing\(id\)/);
+assert.match(js, /function navigateToProfile\(id\)/);
+assert.match(js, /function navigateToStaticPage\(pageId\)/);
+assert.match(js, /function handlePopState\(\)/);
+assert.match(js, /window\.addEventListener\("popstate", handlePopState\);/);
+
+// NM-A25: a real bug caught during this slice's own Playwright verification
+// -- index.html's <script>/<link>/<img> tags were all RELATIVE
+// ("styles.css", "app.js", "data-service.js", "assets/login-hero.png"),
+// which resolve fine at "/" but 404 once the real server serves this same
+// file one path segment deep (e.g. "/listing/:id" resolves "styles.css" to
+// "/listing/styles.css"). Every asset reference must be root-relative
+// (a leading "/") so a fresh load of any of the 4 real deep-link routes
+// actually loads its CSS/JS, not just the bare HTML shell.
+assert.match(html, /<link rel="stylesheet" href="\/styles\.css" \/>/, "styles.css must be root-relative, or a fresh /listing/:id (etc.) load 404s on it");
+assert.match(html, /<script src="\/data-service\.js"><\/script>/, "data-service.js must be root-relative");
+assert.match(html, /<script src="\/app\.js"><\/script>/, "app.js must be root-relative");
+assert.doesNotMatch(html, /src="assets\/|href="styles\.css"|src="app\.js"|src="data-service\.js"/, "no asset reference may be left relative -- see this slice's own real Playwright-caught bug above");
+
+// --- NM-A24: Rate Limiting / Anti-Spam (Listings, Messages, Reports) ---
+assert.match(apiJs, /require\("\.\/rate-limit"\)/, "api.js must reuse NM-A23's own rate-limit module, not re-invent it");
+assert.match(apiJs, /function accountRateLimitKey\(req\)/, "these 3 routes must key on the real authenticated account, not the shared IP");
+assert.match(apiJs, /req\.currentUser \? req\.currentUser\.id : req\.ip/, "the per-account key must fall back to IP only defensively -- these routes always run behind requireSession");
+assert.match(apiJs, /const listingCreateRateLimiter = rateLimiter\(\{/);
+assert.match(apiJs, /const messageCreateRateLimiter = rateLimiter\(\{/);
+assert.match(apiJs, /const reportCreateRateLimiter = rateLimiter\(\{/);
+// Ordering matters: requireSession must run BEFORE the rate limiter, so an
+// unauthenticated request is rejected (401) before ever touching the
+// per-account bucket, and so req.currentUser is guaranteed set for the key.
+assert.match(apiJs, /router\.post\("\/listings", requireSession, listingCreateRateLimiter,/, "listing creation must be both session-gated and rate-limited, in that order");
+assert.match(apiJs, /router\.post\("\/reports", requireSession, reportCreateRateLimiter,/, "reporting must be both session-gated and rate-limited, in that order");
+assert.match(apiJs, /router\.post\("\/conversations\/:id\/messages", requireSession, messageCreateRateLimiter,/, "messaging must be both session-gated and rate-limited, in that order");
+// The 3 real limits themselves, so a future edit can't silently loosen them
+// without this test catching it.
+assert.match(apiJs, /scope: "listings-create",\s*\n\s*windowMs: ONE_DAY_MS,\s*\n\s*max: 20,/);
+assert.match(apiJs, /scope: "messages-send",\s*\n\s*windowMs: ONE_HOUR_MS,\s*\n\s*max: 40,/);
+assert.match(apiJs, /scope: "reports-create",\s*\n\s*windowMs: ONE_DAY_MS,\s*\n\s*max: 15,/);
+
+// A real, greppable server-side log line on every trip, covering both this
+// slice's 3 new limiters and NM-A23's 4 pre-existing ones (fires from the
+// shared factory itself, so every scope gets it automatically).
+assert.match(rateLimitJs, /console\.warn\(\s*\n\s*`\[RateLimit\] blocked scope=\$\{scope\} key=\$\{keyFn\(req\)/, "a rate-limit trip must log a real, greppable [RateLimit] line with the real key, route, and count/max");
+
+// No new npm dependency was added for this slice either (compression was
+// added later, by the deployment-readiness Phase 0 work).
+assert.match(
+  fs.readFileSync(path.join(root, "package.json"), "utf8"),
+  /"dependencies": \{\s*\n\s*"better-sqlite3":.*\n\s*"compression":.*\n\s*"express":.*\n\s*\}/,
+  "NM-A24 itself added no npm dependency"
+);
+
+// Deployment-readiness audit finding: no .env.example/README existed
+// anywhere documenting the (already-safe-by-default) real env vars this app
+// reads -- an operator had to read source to discover the list.
+const envExample = fs.readFileSync(path.join(root, ".env.example"), "utf8");
+["PORT", "NODE_ENV", "DB_PATH", "SEED_DEMO_DATA", "ADMIN_EMAIL", "GOOGLE_CLIENT_ID", "OPENAI_API_KEY", "BOOST_PAYMENTS_ENABLED", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"].forEach((name) => {
+  assert.match(envExample, new RegExp(`${name}=`), `.env.example must document ${name}`);
+});
+const readmeMd = fs.readFileSync(path.join(root, "README.md"), "utf8");
+assert.match(readmeMd, /npm test/, "the README must document how to run the real test suite");
+assert.match(readmeMd, /\.env\.example/, "the README must point at .env.example for the real env var list");
+
+// Retry-After must reach the FRONTEND, not just the raw HTTP response --
+// data-service.js's shared request() is the one place every DataService
+// method funnels through, so this covers all 3 new call sites at once.
+assert.match(dataServiceJs, /error\.retryAfter = Number\(retryAfterHeader\)/, "a 429's Retry-After header must be surfaced on the thrown error for the UI to use");
+
+// A real, translated "try again in X minutes" message exists for all 3
+// actions, in ALL 6 languages this app now maintains full strings for --
+// updated by NM-A26, which gave no/da/fi/is real translations (they used to
+// intentionally fall back to English via t() through empty {} stub blocks;
+// those stubs no longer exist anywhere in this file as of NM-A26).
+assert.match(js, /function formatRetryMinutesMessage\(key, retryAfterSeconds\)/);
+["rateLimit.listings", "rateLimit.messages", "rateLimit.reports"].forEach((key) => {
+  const matches = js.match(new RegExp(`"${key.replace(".", "\\.")}": "[^"]*\\{minutes\\}[^"]*"`, "g")) || [];
+  assert.equal(matches.length, 6, `${key} must be defined with a real {minutes} placeholder in ALL 6 language dictionaries (en/sv/no/da/fi/is) (found ${matches.length})`);
+});
+
+// Each of the 3 real UI call sites must actually branch on RATE_LIMITED --
+// not just have the helper function sitting unused somewhere.
+const rateLimitMessagesBranch = js.match(/error\.code === "RATE_LIMITED"\s*\n\s*\? formatRetryMinutesMessage\("rateLimit\.messages", error\.retryAfter\)/g) || [];
+assert.equal(rateLimitMessagesBranch.length, 2, "BOTH sendComposedMessage and sendThreadReply must surface the real rate-limit message, not just one of the two message-send paths");
+assert.match(js, /error\.code === "RATE_LIMITED" \? formatRetryMinutesMessage\("rateLimit\.reports", error\.retryAfter\)/, "submitReportModal must surface the real rate-limit message");
+assert.match(js, /error\.code === "RATE_LIMITED" \? formatRetryMinutesMessage\("rateLimit\.listings", error\.retryAfter\)/, "commitPublish must surface the real rate-limit message");
+// commitPublish previously had NO error handling at all -- a real regression
+// guard that it's now wrapped, not just that the rate-limit branch exists.
+assert.match(js, /record = await commitPublishRequest\(values, images\);\s*\n\s*\} catch \(error\) \{/, "publishing a listing must now handle a server rejection instead of leaving an unhandled promise rejection");
 
 class Element {
   constructor(tagName) {
@@ -794,6 +1241,7 @@ function makeElementMap() {
     "listing-grid",
     "empty-state",
     "empty-heading",
+    "fairness-section-container",
     "listing-detail",
     "back-to-browse",
     "category-grid",
@@ -841,18 +1289,54 @@ function makeElementMap() {
     "auth-google-signin",
     "auth-divider",
     "auth-divider-text",
+    "auth-forgot-link",
+    "forgot-password-modal",
+    "forgot-password-modal-close",
+    "forgot-password-modal-title",
+    "forgot-password-modal-body",
+    "forgot-password-form",
+    "forgot-password-email-label",
+    "forgot-password-email-input",
+    "forgot-password-error",
+    "forgot-password-success",
+    "forgot-password-submit-button",
+    "reset-password-modal",
+    "reset-password-modal-close",
+    "reset-password-modal-title",
+    "reset-password-modal-body",
+    "reset-password-form",
+    "reset-password-label",
+    "reset-password-input",
+    "reset-password-error",
+    "reset-password-success",
+    "reset-password-submit-button",
     "compose-modal",
     "compose-modal-title",
     "compose-message-input",
     "compose-cancel-button",
     "compose-send-button",
     "compose-modal-close",
+    "report-modal",
+    "report-modal-title",
+    "report-modal-body",
+    "report-reason-select",
+    "report-reason-label",
+    "report-details-input",
+    "report-details-label",
+    "report-error",
+    "report-modal-close",
+    "report-cancel-button",
+    "report-submit-button",
     "toast",
     "active-filter-chips",
     "sort-indicator",
     "filter-sheet",
     "filter-sheet-title",
     "filter-sheet-close",
+    "boost-sheet",
+    "boost-sheet-title",
+    "boost-sheet-body",
+    "boost-sheet-close",
     "filter-sort-label",
     "filter-sort-select",
     "filter-sort-recent",
@@ -903,10 +1387,50 @@ function makeElementMap() {
     "login-email-input",
     "login-password-label",
     "login-password-input",
+    "login-forgot-link",
     "login-error",
     "login-continue-button",
     "login-mode-toggle",
     "login-guest-button",
+    "static-page-content",
+    "footer-tagline",
+    "footer-cta-account",
+    "footer-cta-sell",
+    "footer-company-line",
+    "footer-col-categories",
+    "footer-col-explore",
+    "footer-col-buysell",
+    "footer-col-help",
+    "footer-col-legal",
+    "footer-col-company",
+    "footer-browse-all",
+    "footer-link-about",
+    "footer-link-how",
+    "footer-link-safety-tips",
+    "footer-link-terms-explore",
+    "footer-link-post",
+    "footer-link-pricing",
+    "footer-link-photo",
+    "footer-link-safe-selling",
+    "footer-link-help-center",
+    "footer-link-faq",
+    "footer-link-contact",
+    "footer-link-report",
+    "footer-link-privacy",
+    "footer-link-terms",
+    "footer-link-cookies",
+    "footer-link-dsr",
+    "footer-link-micany",
+    "footer-link-moderation",
+    "footer-link-data-safety",
+    "footer-link-boost",
+    "footer-countries-title",
+    "footer-country-flags",
+    "footer-copyright",
+    "cookie-banner",
+    "cookie-banner-text",
+    "cookie-settings-button",
+    "cookie-accept-button",
     "inbox-eyebrow",
     "inbox-title",
     "inbox-content",
@@ -926,12 +1450,33 @@ function makeElementMap() {
     "analytics-eyebrow",
     "analytics-title",
     "analytics-content",
-    "seller-profile"
+    "seller-profile",
+    "settings-signed-out",
+    "settings-signed-out-text",
+    "settings-form-wrap",
+    "settings-email-display",
+    "settings-email-label",
+    "settings-email-hint",
+    "settings-phone-input",
+    "settings-phone-label",
+    "settings-home-country-select",
+    "settings-home-country-label",
+    "settings-home-region-input",
+    "settings-home-region-label",
+    "settings-home-region-datalist",
+    "settings-home-location-hint",
+    "settings-error",
+    "settings-save-button",
+    "admin-content"
   ];
   const map = Object.fromEntries(ids.map((id) => [id, new Element("div")]));
   map["sell-subtype-field"].hidden = true;
   map["auth-modal"].hidden = true;
   map["compose-modal"].hidden = true;
+  map["report-modal"].hidden = true;
+  map["report-error"].hidden = true;
+  map["settings-signed-out"].hidden = true;
+  map["settings-error"].hidden = true;
   map["toast"].hidden = true;
   map["filter-sheet"].hidden = true;
   map["filter-subtype-field"].hidden = true;
@@ -961,7 +1506,10 @@ const views = [
   "thread-view",
   "my-listings-view",
   "analytics-view",
-  "profile-view"
+  "profile-view",
+  "static-page-view",
+  "settings-view",
+  "admin-view"
 ].map((id) => {
   const element = new Element("section");
   element.id = id;
@@ -1079,9 +1627,25 @@ function makeTestFetch() {
   };
 }
 
-async function runBehavioralTests() {
+// `testDb` (NM-A23): the real better-sqlite3 handle behind the one test
+// server this whole suite shares -- used only to simulate the passage of
+// time on a password-reset token (setting expires_at into the past) for a
+// real, deterministic expired-token test, since the suite can't actually
+// wait 45 real minutes. Never used to fabricate data that a real HTTP
+// request wouldn't otherwise have produced.
+async function runBehavioralTests(testDb) {
   const firstBootstrap = vm.runInNewContext(combinedJs, { document, fetch: makeTestFetch() });
   await firstBootstrap;
+
+  // NM-A21: register the real designated admin account once, outside the
+  // vm-sandbox's own cookie jar (same pattern as registerRealUserDirectly's
+  // other callers) -- used later both to verify NM-A20's now-admin-gated
+  // report reads and to exercise the moderation queue's real access control.
+  // (Uses a literal password, not DEFAULT_TEST_PASSWORD -- that constant is
+  // declared further down in this same function, after this point.)
+  const adminRegistration = await registerRealUserDirectly("NMA21 Admin", "nma21-admin@example.com", "correcthorse1");
+  assert.equal(adminRegistration.user.isAdmin, true, "registering with the exact ADMIN_EMAIL must really mark the account is_admin, not just simulate it client-side");
+  adminCookie = adminRegistration.cookie;
 
   assert.match(elements["listing-grid"].innerHTML, /Solid oak dining table/);
 assert.match(elements["listing-grid"].innerHTML, /Sponsored/);
@@ -1102,7 +1666,7 @@ assert.equal((elements["category-chips"].innerHTML.match(/class="chip/g) || []).
 // button's own aria-label overrides all descendant text for screen readers.
 assert.match(
   elements["listing-grid"].innerHTML,
-  /aria-label="Open listing: iPhone 14, 128 GB, 5 900 kr, sponsored, Fresh, Solna, 6\.8 km away"/
+  /aria-label="Open listing: iPhone 14, 128 GB, 5 900 kr, sponsored, Fresh, Solna, 6\.8 km away"/
 );
 assert.match(elements["listing-grid"].innerHTML, /aria-label="Save iPhone 14, 128 GB for later"/);
 assert.match(elements["listing-grid"].innerHTML, /class="listing-photo"[^>]*aria-hidden="true"/);
@@ -1139,13 +1703,71 @@ const fakeNavigator = {
     }
   }
 };
+// A real (if tiny, in-memory) localStorage -- the sandbox has none by
+// default, and the app's own code already guards every access with
+// `typeof localStorage !== "undefined"` (see loadSavedLanguage()), so its
+// total absence was previously silently masking whether persistence (the
+// cookie-consent banner, the language preference) actually round-trips at
+// all. Exposed as `fakeLocalStorageStore` too, so tests can inspect it directly.
+const fakeLocalStorageStore = {};
+const fakeLocalStorage = {
+  getItem(key) {
+    return Object.prototype.hasOwnProperty.call(fakeLocalStorageStore, key) ? fakeLocalStorageStore[key] : null;
+  },
+  setItem(key, value) {
+    fakeLocalStorageStore[key] = String(value);
+  },
+  removeItem(key) {
+    delete fakeLocalStorageStore[key];
+  }
+};
+const scrollToCalls = [];
+// NM-A25: a real (if tiny) fake `location`/`history` pair for exercising the
+// new client-side routing layer. `fakeLocation` is the SAME object reference
+// `window.location` points at inside the sandboxed script (vm.createContext
+// doesn't clone nested objects), so pushState-driven mutations made by code
+// running INSIDE the sandbox are visible on `fakeLocation` out here too, and
+// `firePopState()` calls back whatever bootstrap() registered via the fake
+// `window.addEventListener("popstate", ...)` below -- a real simulation of a
+// back/forward tap, not just an internal-flag check.
+const fakeLocation = { href: "http://localhost:4173/", origin: "http://localhost:4173", pathname: "/", search: "" };
+function setFakeLocation(urlPath) {
+  const [pathname, search] = String(urlPath).split("?");
+  fakeLocation.pathname = pathname;
+  fakeLocation.search = search ? `?${search}` : "";
+  fakeLocation.href = `${fakeLocation.origin}${fakeLocation.pathname}${fakeLocation.search}`;
+}
+const pushStateCalls = [];
+const fakeHistory = {
+  pushState(state, title, url) {
+    pushStateCalls.push(url);
+    setFakeLocation(url);
+  },
+  replaceState(state, title, url) {
+    setFakeLocation(url);
+  }
+};
+const popstateListeners = [];
+function firePopState() {
+  popstateListeners.slice().forEach((listener) => listener({}));
+}
 const context = vm.createContext({
   document,
   fetch: makeTestFetch(),
   FileReader: FakeFileReader,
   Image: FakeImage,
   navigator: fakeNavigator,
-  window: { location: { href: "http://localhost:4173/" }, addEventListener() {} }
+  window: {
+    location: fakeLocation,
+    history: fakeHistory,
+    addEventListener(type, handler) {
+      if (type === "popstate") popstateListeners.push(handler);
+    },
+    scrollTo(x, y) {
+      scrollToCalls.push([x, y]);
+    }
+  },
+  localStorage: fakeLocalStorage
 });
 const secondBootstrap = vm.runInContext(combinedJs, context);
 await secondBootstrap;
@@ -1198,11 +1820,89 @@ async function registerRealUserDirectly(name, email, password) {
 assert.equal(elements["result-count"].textContent, "8 listings");
 assert.match(elements["listing-grid"].innerHTML, /Volvo V60/);
 
+// --- BL-A04/BL-A05: local category names + localized/de-accented search synonyms ---
+assert.equal(context.categoryLabel("Vehicles"), "Vehicles", "English must return the plain canonical label");
+context.setLanguage("sv");
+assert.equal(context.categoryLabel("Vehicles"), "Fordon");
+assert.equal(context.categoryLabel("Home & Furniture"), "Hem & Möbler");
+context.setLanguage("no");
+assert.equal(context.categoryLabel("Vehicles"), "Kjøretøy");
+context.setLanguage("da");
+assert.equal(context.categoryLabel("Vehicles"), "Køretøjer");
+context.setLanguage("fi");
+assert.equal(context.categoryLabel("Vehicles"), "Ajoneuvot");
+context.setLanguage("is");
+assert.equal(context.categoryLabel("Vehicles"), "Ökutæki");
+assert.equal(context.categoryLabel("does-not-exist"), "does-not-exist", "an unknown id must fall back to itself, never crash");
+
+// Every real render surface must re-render in the new language immediately,
+// not just on next reload/open.
+context.setLanguage("sv");
+assert.match(elements["filter-category-select"].innerHTML, /<option value="Vehicles">Fordon<\/option>/);
+assert.match(elements["sell-category-select"].innerHTML, /<option value="Vehicles">Fordon<\/option>/);
+assert.match(elements["category-chips"].innerHTML, /data-category="Vehicles">Fordon</);
+assert.match(elements["category-grid"].innerHTML, /data-category-jump="Vehicles">[\s\S]*?<strong>Fordon<\/strong>/);
+assert.match(elements["sidebar-categories-list"].innerHTML, /data-category-jump="Vehicles">[\s\S]*?Fordon/);
+context.setLanguage("en");
+assert.match(elements["filter-category-select"].innerHTML, /<option value="Vehicles">Vehicles<\/option>/, "switching back to English must re-render English labels too");
+
+// The synthetic "All" chip/option reuses the existing filter.categoryAll key.
+context.setLanguage("sv");
+assert.match(elements["category-chips"].innerHTML, /data-category="All">Alla kategorier</);
+context.setLanguage("en");
+
+// BL-A05: a localized synonym surfaces listings from its mapped category
+// even though the word itself appears nowhere in that listing's own title/
+// category/subtype/locality/condition text (proven above: no fixture text
+// contains "bil" or "möbler").
+context.setLanguage("sv");
+elements["search-input"].value = "bil";
+elements["search-input"].listeners.input();
+assert.equal(elements["result-count"].textContent, "1 annons", "\"bil\" must resolve to exactly the one real Vehicles listing via the synonym map (Swedish is still the active language here)");
+assert.match(elements["listing-grid"].innerHTML, /Volvo V60/);
+assert.doesNotMatch(elements["listing-grid"].innerHTML, /oak dining table|Brass floor lamp/i, "a Vehicles synonym must never leak into Home & Furniture results");
+
+elements["search-input"].value = "möbler";
+elements["search-input"].listeners.input();
+assert.equal(elements["result-count"].textContent, "2 annonser", "\"möbler\" must resolve to both real Home & Furniture listings via the synonym map");
+assert.match(elements["listing-grid"].innerHTML, /oak dining table/i);
+assert.match(elements["listing-grid"].innerHTML, /Brass floor lamp/i);
+assert.doesNotMatch(elements["listing-grid"].innerHTML, /Volvo V60/, "a Home & Furniture synonym must never leak into Vehicles results");
+
+// The de-accented form of the same synonym must match too, via the
+// existing normalize() NFD path -- proves synonym matching didn't bypass
+// or duplicate the existing accent-insensitive comparison.
+elements["search-input"].value = "mobler";
+elements["search-input"].listeners.input();
+assert.equal(elements["result-count"].textContent, "2 annonser", "the de-accented spelling of a synonym must match exactly like the accented one");
+
+// The pre-existing accent-insensitive SUBSTRING search (unrelated to
+// synonyms) must still work, unmodified: a de-accented "ostermalm" still
+// finds the real seed listing whose own locality is "Östermalm".
+elements["search-input"].value = "ostermalm";
+elements["search-input"].listeners.input();
+assert.equal(elements["result-count"].textContent, "1 annons");
+assert.match(elements["listing-grid"].innerHTML, /2-room apartment near Slussen/, "pre-existing accent-insensitive substring search must be unaffected by the new synonym layer");
+
+context.setLanguage("en");
+elements["search-input"].value = "";
+elements["search-input"].listeners.input();
+console.log("PASS: BL-A04 local category names -- Vehicles/Home & Furniture (and every other category) render real, distinct sv/no/da/fi/is labels across the filter select, sell select, category chips, category grid, and sidebar list, all live on setLanguage() with no reload required, with a safe fallback for an unknown category id.");
+console.log("PASS: BL-A05 localized/de-accented search -- Swedish \"bil\"/\"möbler\" (and their de-accented spellings) resolve to exactly the real listings in their mapped category with zero cross-category leakage, and the pre-existing accent-insensitive substring search (e.g. \"ostermalm\" -> \"Östermalm\") keeps working unchanged.");
+
 context.openListing("iphone-14");
 assert.match(elements["listing-detail"].innerHTML, /Message seller/);
 assert.match(elements["listing-detail"].innerHTML, /Hi, is this still available\?/);
 assert.match(elements["listing-detail"].innerHTML, /Professional seller/);
 assert.match(elements["listing-detail"].innerHTML, /Meet safely/);
+// NM-A20: the safety reminder was hardcoded English before this slice --
+// improved to be a real, translated link into the full Safety Tips page.
+assert.match(elements["listing-detail"].innerHTML, /data-static-page="safetyTips"/, "the safety reminder must link to the full Safety Tips page, not just show a static blurb");
+context.setLanguage("sv");
+context.openListing("iphone-14");
+assert.match(elements["listing-detail"].innerHTML, /Träffas säkert/, "the safety reminder must actually be translated, not silently stay English");
+context.setLanguage("en");
+context.openListing("iphone-14");
 
 // Message Seller CTA lives in a dedicated fixed bar (pinned above the bottom
 // nav via CSS), not mixed in with the in-flow Save/Share row.
@@ -1218,10 +1918,14 @@ assert.match(elements["listing-detail"].innerHTML, /role="img" aria-label="Photo
 // copying a real, correctly-worded summary + the current page URL to the
 // clipboard, and surface that via a toast (an invisible clipboard write
 // would otherwise give the user zero feedback).
+// NM-A25: the shared URL must now be a real, per-listing deep link
+// (`/listing/iphone-14`), not the site's bare address -- reloading this
+// exact URL against a real server is proven to land on this exact listing
+// in the NM-A25 backend-routing section below.
 elements["toast"].hidden = true;
 elements["toast"].textContent = "";
 await context.handleShareClick("iphone-14");
-assert.equal(fakeClipboard.lastWrittenText, "iPhone 14, 128 GB — 5 900 kr http://localhost:4173/");
+assert.equal(fakeClipboard.lastWrittenText, "iPhone 14, 128 GB — 5 900 kr http://localhost:4173/listing/iphone-14");
 assert.equal(elements["toast"].hidden, false);
 assert.equal(elements["toast"].textContent, "Link copied to clipboard.");
 
@@ -1266,9 +1970,16 @@ context.updateSubtypeVisibility();
 assert.equal(elements["sell-subtype-field"].hidden, true);
 assert.equal(elements["sell-subtype-select"].innerHTML, "");
 
-// Price formatting.
-assert.equal(context.formatPrice("1200"), "1 200 kr");
+// Price formatting: formatPrice() now stores just the raw digits (no
+// currency baked in -- see NM-A19), and formatListingPrice() is the one
+// place that turns a stored price + a listing's own country into a real,
+// locale-correct display string.
+assert.equal(context.formatPrice("1200"), "1200");
 assert.equal(context.formatPrice(""), "");
+assert.equal(context.formatListingPrice({ price: "1200", country: "Sweden" }), "1 200 kr");
+assert.equal(context.formatListingPrice({ price: "1200", country: "Finland" }), "1 200 €");
+assert.equal(context.formatListingPrice({ price: "Free", country: "Sweden" }), "Free");
+assert.equal(context.formatListingPrice({ price: "", country: "Sweden" }), "Set a price");
 
 // Publish blocks with clear, additive validation messages when required
 // fields are missing (no photo, no title yet). This must be checked BEFORE
@@ -1296,7 +2007,7 @@ elements["sell-description-input"].value = "Used twice, no damage, paddle includ
 
 context.renderSellPreview();
 assert.match(elements["sell-preview"].innerHTML, /Test kayak, barely used/);
-assert.match(elements["sell-preview"].innerHTML, /900 kr/);
+assert.match(elements["sell-preview"].innerHTML, /900 kr/);
 
 const guestPublishResult = await context.publishListing();
 assert.equal(guestPublishResult, null, "a signed-out publish must not return a listing");
@@ -1316,7 +2027,12 @@ assert.equal(elements["sell-validation"].classList.contains("success"), true);
 assert.equal(elements["result-count"].textContent, "9 listings", "resumed publish must add exactly one listing");
 assert.match(elements["listing-grid"].innerHTML, /Test kayak, barely used/);
 assert.match(elements["listing-detail"].innerHTML, /Test kayak, barely used/);
-assert.match(elements["listing-detail"].innerHTML, /aria-label="Message Test Seller about Test kayak, barely used"/);
+// NM-A22 re-audit fix: nothing used to stop a seller from messaging
+// themselves about their own listing. Viewing your own just-published
+// listing (signed in as its real seller, right here) must never show a
+// "Message seller" CTA or the suggested-opener button at all.
+assert.doesNotMatch(elements["listing-detail"].innerHTML, /id="message-seller"/, "a seller must never see a Message CTA on their own listing");
+assert.doesNotMatch(elements["listing-detail"].innerHTML, /id="suggested-opener"/, "a seller must never see the suggested-opener on their own listing either");
 
 // The State/Region typed into the Sell form's combobox must round-trip onto
 // the real, saved listing -- not just live in the form.
@@ -1413,12 +2129,12 @@ context.closeAuthModal();
 // --- NM-A4/NM-A14: Report is gated too, and "Continue as Guest" must NOT
 // resume it -- guests can browse but can no longer report (requirement 4). ---
 elements["toast"].hidden = true;
-await context.handleReportClick("iphone-14");
-assert.equal(elements["toast"].hidden, true, "a guest's report must not go through yet");
+await context.handleReportListingClick("iphone-14");
+assert.equal(elements["report-modal"].hidden, true, "a guest must never see the report modal");
 assert.equal(elements["auth-modal"].hidden, false);
 context.dismissAuthModal();
 assert.equal(elements["auth-modal"].hidden, true, "Continue as Guest must dismiss the prompt");
-assert.equal(elements["toast"].hidden, true, "Continue as Guest must NOT resume the pending report -- guests cannot report anymore");
+assert.equal(elements["report-modal"].hidden, true, "Continue as Guest must NOT resume the pending report -- guests cannot report anymore");
 assert.equal(elements["account-actions"].hidden, true, "Continue as Guest must not create any signed-in identity");
 
 // --- NM-A4: language switching still works while/around the auth screens ---
@@ -1726,7 +2442,7 @@ assert.match(elements["active-filter-chips"].innerHTML, /data-remove-filter="con
 assert.match(elements["active-filter-chips"].innerHTML, /data-remove-filter="condition:Like new"/);
 assert.match(elements["active-filter-chips"].innerHTML, /data-remove-filter="seller:Private seller"/);
 assert.match(elements["active-filter-chips"].innerHTML, /data-remove-filter="price"/);
-assert.match(elements["active-filter-chips"].innerHTML, /Price: 500–3000 kr/);
+assert.match(elements["active-filter-chips"].innerHTML, /Price: 500–3 000 kr/);
 assert.match(elements["active-filter-chips"].innerHTML, /data-remove-filter="distance"/);
 assert.equal(elements["sort-indicator"].hidden, false);
 assert.match(elements["sort-indicator"].textContent, /Lowest price/);
@@ -2029,6 +2745,16 @@ assert.match(elements["sell-photo-grid"].innerHTML, /data-make-cover="1"/, "the 
 // --- NM-A9 UX pass: signed-in topbar (avatar + quick-action pills), My Listings, Boost, Analytics ---
 assert.equal(elements["account-actions"].hidden, true, "signed-out topbar must not show account action pills");
 assert.equal(elements["profile-button"].textContent, "You", "signed-out avatar must show the plain fallback");
+assert.equal(elements["profile-button"].getAttribute("aria-label"), "Profile", "signed-out avatar must use translated profile copy for its accessible name");
+context.setLanguage("sv");
+assert.equal(elements["profile-button"].textContent, "Du", "Swedish language switching must update the signed-out topbar label");
+assert.equal(elements["profile-button"].getAttribute("aria-label"), "Profil", "Swedish language switching must update the signed-out topbar accessible name");
+context.setLanguage("fi");
+assert.equal(elements["profile-button"].textContent, "Sinä", "Finnish language switching must update the signed-out topbar label");
+assert.equal(elements["profile-button"].getAttribute("aria-label"), "Profiili", "Finnish language switching must update the signed-out topbar accessible name");
+context.setLanguage("en");
+assert.equal(elements["profile-button"].textContent, "You", "returning to English must restore the signed-out topbar label");
+assert.equal(elements["profile-button"].getAttribute("aria-label"), "Profile", "returning to English must restore the signed-out topbar accessible name");
 
 await registerTestUser("Ola Analytics", "ola@example.com", DEFAULT_TEST_PASSWORD);
 assert.equal(elements["account-actions"].hidden, false, "signed-in topbar must show the account action pills");
@@ -2088,21 +2814,383 @@ await context.openSellerProfile(analyticsListing.sellerId);
 assert.equal(elements["auth-modal"].hidden, true, "guests must be able to view public seller profiles without an auth wall");
 assert.match(elements["seller-profile"].innerHTML, /Ola Analytics/);
 assert.match(elements["seller-profile"].innerHTML, /Analytics test bicycle/);
+
+// Rating/review data (NM-A17, computed by the same ratingSummaryForUser /
+// recentReviewsForUser the listing detail page's own compact seller summary
+// already calls) must show up on the profile page too -- NM-A16 is asked to
+// surface it, not reimplement or ignore it.
+assert.match(elements["seller-profile"].innerHTML, /No reviews yet/, "a seller with no reviews yet must show the empty state, not a blank section");
+const reviewer = await registerRealUserDirectly("Review Writer", "reviewwriter@example.com", DEFAULT_TEST_PASSWORD);
+const reviewRes = await fetch(`${serverOrigin}/api/reviews`, {
+  method: "POST",
+  headers: { "content-type": "application/json", cookie: reviewer.cookie },
+  body: JSON.stringify({ listingId: analyticsListing.id, revieweeId: analyticsListing.sellerId, rating: 5, text: "Great seller, smooth pickup." })
+});
+assert.equal(reviewRes.status, 201, "posting a real review must succeed so the profile page has real data to display");
+await context.openSellerProfile(analyticsListing.sellerId);
+assert.match(elements["seller-profile"].innerHTML, /★★★★★/, "a real 5-star review must render as stars");
+assert.match(elements["seller-profile"].innerHTML, /Review Writer/, "the reviewer's real name must be attributed");
+assert.match(elements["seller-profile"].innerHTML, /Great seller, smooth pickup\./);
+assert.doesNotMatch(elements["seller-profile"].innerHTML, /No reviews yet/, "the empty state must disappear once a real review exists");
+
+// A nonexistent seller id must be a clean, translated not-found state, not a crash.
+await context.openSellerProfile("nonexistent-seller-id");
+assert.ok(views.find((view) => view.id === "profile-view").classList.contains("active-view"));
+assert.match(elements["seller-profile"].innerHTML, /This profile could not be found\./);
+
+// i18n + country theming on the profile page (NM-A16 requirement 7): a
+// language switch while the page happens to be open must re-translate it
+// live, not just on next open.
+await context.openSellerProfile(analyticsListing.sellerId);
+// applyTranslations() re-invokes openSellerProfile() fire-and-forget (same
+// pattern as applyDetectedLocation()/initGoogleSignIn() in bootstrap), so
+// setLanguage() itself returns before that re-render lands -- waiting for
+// the real, observable outcome instead of asserting immediately after is
+// the same NM-A11/NM-A15-era lesson every other async-resume test here follows.
+context.setLanguage("sv");
+await waitFor(() => elements["seller-profile"].innerHTML.includes("Medlem sedan"));
+assert.match(elements["seller-profile"].innerHTML, /aktiv annons\b/);
+assert.match(elements["seller-profile"].innerHTML, /Senaste omdömen/);
+context.setLanguage("en");
+await waitFor(() => elements["seller-profile"].innerHTML.includes("Member since"));
+assert.match(css, /\.profile-avatar\s*{[^}]*background: var\(--country-primary\);/, "the profile avatar must use the live country theme color, not a fixed one");
+
+// --- NM-A17: Reviews, Ratings & Basic Verification Signals -- the full
+// submission path, wired up and exercised end to end (not just the raw
+// backend calls the NM-A16 turn used to prove profile display). ---
+
+async function publishTestListing(sellerName, sellerEmail, title) {
+  await registerTestUser(sellerName, sellerEmail, DEFAULT_TEST_PASSWORD);
+  await uploadFakePhoto();
+  elements["sell-title-input"].value = title;
+  elements["sell-price-input"].value = "300";
+  elements["sell-category-select"].value = "Free Items";
+  context.updateSubtypeVisibility();
+  elements["sell-condition-select"].value = "Good";
+  elements["sell-location-input"].value = "Review Test District";
+  elements["sell-description-input"].value = "A listing published purely to exercise NM-A17's review flow.";
+  const listing = await context.publishListing();
+  await context.signOutUser();
+  return listing;
+}
+
+const reviewSellerListing = await publishTestListing("Review Seller", "review-seller@example.com", "Review Flow Test Item");
+
+// A signed-in reviewer can post a real review through the actual UI path
+// (handleReviewSubmitClick's own DOM-reading is exercised for real in
+// Playwright below; here submitReview() itself -- everything past that
+// point -- is exercised directly).
+await registerTestUser("Review Reviewer", "review-reviewer@example.com", DEFAULT_TEST_PASSWORD);
+context.openListing(reviewSellerListing.id);
+assert.match(elements["listing-detail"].innerHTML, /review-box/, "a signed-in non-owner must see the review form");
+const postedReview = await context.submitReview(reviewSellerListing.id, "4", "Solid seller, quick pickup.");
+assert.ok(postedReview, "a valid review must succeed");
+assert.equal(postedReview.moderated, false);
+assert.equal(elements["toast"].textContent, "Review posted.");
+assert.match(elements["listing-detail"].innerHTML, /4\.0 \(1\)/, "the listing detail's compact seller rating must reflect the new review immediately");
+
+// Duplicate: the same reviewer, same listing, same seller -- rejected, not silently ignored.
+const dupReview = await context.submitReview(reviewSellerListing.id, "2", "again");
+assert.equal(dupReview, null, "a duplicate review must not succeed");
+assert.equal(elements["toast"].textContent, "You already reviewed this seller for this listing.");
+
+// Self-review: the template itself must not even offer the form to the owner...
+await loginTestUser("review-seller@example.com", DEFAULT_TEST_PASSWORD);
+context.openListing(reviewSellerListing.id);
+assert.doesNotMatch(elements["listing-detail"].innerHTML, /review-box/, "a seller must not be offered a form to review their own listing");
+assert.match(elements["listing-detail"].innerHTML, /You cannot review yourself\./);
+// ...and the underlying function independently refuses it too, not just the UI.
+const selfReview = await context.submitReview(reviewSellerListing.id, "5", "I'm great");
+assert.equal(selfReview, null);
+assert.equal(elements["toast"].textContent, "You cannot review yourself.");
+await context.signOutUser();
+
+// Guest gating: submitReview must open the auth modal and resume with the
+// EXACT rating/text a guest already typed once they sign in -- proving the
+// "don't pre-disable the inputs" fix actually matters, not just that the
+// server-side gate exists.
+assert.equal(elements["auth-modal"].hidden, true);
+// requireAuth resolves this call to null immediately when signed out (the
+// action is only STASHED, not awaited) -- like every other gated-then-
+// resumed action in this file, the resume must be proven via a real,
+// observable side effect afterward, not this call's own return value.
+await context.submitReview(reviewSellerListing.id, "5", "Great, guest attempt.");
+assert.equal(elements["auth-modal"].hidden, false, "an unauthenticated review attempt must open the auth prompt, exactly like Save/Message/Report");
+await registerTestUser("Guest Reviewer", "guest-reviewer@example.com", DEFAULT_TEST_PASSWORD);
+await waitFor(() => elements["toast"].textContent === "Review posted.");
+await context.openSellerProfile(reviewSellerListing.sellerId);
+assert.match(
+  elements["seller-profile"].innerHTML,
+  /Great, guest attempt\./,
+  "the resumed review must use the EXACT text the guest typed before being gated"
+);
+assert.match(elements["seller-profile"].innerHTML, /Guest Reviewer/, "the resumed review must be attributed to the account that just signed in");
+await context.signOutUser();
+
+// Abuse moderation, first offense: text is cleaned and the review still
+// posts, but the writer must see a visible warning.
+const moderationSellerListing = await publishTestListing("Moderation Seller", "moderation-seller@example.com", "Moderation Flow Test Item");
+await registerTestUser("Repeat Offender", "repeat-offender@example.com", DEFAULT_TEST_PASSWORD);
+const firstAbusiveReview = await context.submitReview(moderationSellerListing.id, "1", "This seller is a fucking asshole");
+assert.ok(firstAbusiveReview, "a first offense must still post (cleaned), not be rejected outright");
+assert.equal(firstAbusiveReview.moderated, true);
+assert.doesNotMatch(firstAbusiveReview.text, /fuck|asshole/i, "abusive words must be removed from the stored/returned text");
+assert.equal(
+  elements["toast"].textContent,
+  "Your review was posted, but inappropriate language was removed. Repeated violations will block you from leaving reviews."
+);
+await context.openSellerProfile(moderationSellerListing.sellerId);
+assert.match(elements["seller-profile"].innerHTML, /\*{4,}/, "the cleaned (asterisked) review text must be what actually renders on the seller's public profile");
+assert.doesNotMatch(elements["seller-profile"].innerHTML, /fuck|asshole/i);
+
+// Second offense (same reviewer, a different seller/listing so the UNIQUE
+// constraint isn't what blocks this): the account is banned NOW, and this
+// submission itself is rejected outright, not saved cleaned.
+const secondModerationListing = await publishTestListing("Moderation Seller Two", "moderation-seller-2@example.com", "Second Moderation Test Item");
+await loginTestUser("repeat-offender@example.com", DEFAULT_TEST_PASSWORD);
+const secondAbusiveReview = await context.submitReview(secondModerationListing.id, "1", "What a piece of shit");
+assert.equal(secondAbusiveReview, null, "a second offense must be rejected, not saved even cleaned");
+assert.equal(
+  elements["toast"].textContent,
+  "Your review contained inappropriate language. Repeated violations have blocked you from leaving reviews."
+);
+await context.openSellerProfile(secondModerationListing.sellerId);
+assert.match(elements["seller-profile"].innerHTML, /No reviews yet/, "the rejected second-offense review must not exist at all");
+
+// Now permanently banned: even a perfectly clean review must be rejected.
+const thirdModerationListing = await publishTestListing("Moderation Seller Three", "moderation-seller-3@example.com", "Third Moderation Test Item");
+await loginTestUser("repeat-offender@example.com", DEFAULT_TEST_PASSWORD);
+const cleanAfterBanReview = await context.submitReview(thirdModerationListing.id, "5", "Actually this one is totally clean and polite.");
+assert.equal(cleanAfterBanReview, null, "a banned account must be rejected even with entirely clean text");
+assert.equal(elements["toast"].textContent, "You are no longer allowed to leave reviews.");
+await context.signOutUser();
+
+// --- Site footer, static content pages, and cookie notice ---
+
+// A real published listing's trust box must NOT show the old, generic
+// "New seller · Published just now" line anymore -- it's the exact same
+// hardcoded string for every single new listing regardless of the seller's
+// real history, so once real trust signals exist (rating, verified badge,
+// member since) it's stale, duplicate information, not complementary. A
+// seed listing (no real account behind it, so no real profile to fall back
+// on) is the one case that still shows its own (real, varied) trust text.
+context.openListing(reviewSellerListing.id);
+assert.doesNotMatch(
+  elements["listing-detail"].innerHTML,
+  /New seller · Published just now/,
+  "a real seller's generic, never-updating trust text must not be shown alongside their real rating summary"
+);
+context.openListing("iphone-14");
+assert.match(elements["listing-detail"].innerHTML, /Verified phone · 143 completed deals · Fast responder/, "a seed listing (no real account) must keep showing its own real trust text -- it's the only signal available for it");
+
+// Every footer link opens something real -- either an existing view/action
+// (already covered by their own data-view/data-category-jump tests
+// elsewhere) or a genuinely written static page, never a dead link.
+context.openStaticPage("privacyPolicy");
+assert.ok(views.find((view) => view.id === "static-page-view").classList.contains("active-view"));
+assert.match(elements["static-page-content"].innerHTML, /Privacy Policy/);
+assert.match(elements["static-page-content"].innerHTML, /Micany Investment/, "the company attribution must appear on its legal pages");
+assert.match(elements["static-page-content"].innerHTML, /GDPR/);
+
+context.openStaticPage("dataSubjectRights");
+assert.match(elements["static-page-content"].innerHTML, /Data Subject Rights/);
+assert.match(elements["static-page-content"].innerHTML, /Right to erasure/);
+assert.match(elements["static-page-content"].innerHTML, /support@findnord\.com/);
+
+context.openStaticPage("termsOfService");
+assert.match(elements["static-page-content"].innerHTML, /Terms of Service/);
+assert.match(elements["static-page-content"].innerHTML, /No payments or escrow/);
+
+context.openStaticPage("cookiePolicy");
+assert.match(elements["static-page-content"].innerHTML, /Cookie Policy/);
+// The policy must describe the REAL cookies/storage this app actually
+// uses, not generic boilerplate -- fn_session is the real session cookie
+// name (scripts/auth.js), fn_lang the real language-preference key.
+assert.match(elements["static-page-content"].innerHTML, /fn_session/);
+assert.match(elements["static-page-content"].innerHTML, /fn_lang/);
+assert.match(elements["static-page-content"].innerHTML, /no third-party ad-tracking/i, "the policy must honestly state there is no ad-tracking, since none actually exists in this app");
+
+// NM-A20: Safety Tips already existed but is improved here -- real,
+// current guidance mentioning both the (now genuinely functional) Report
+// button and the new Block action, in a calm tone rather than an
+// alarmist list.
+context.openStaticPage("safetyTips");
+assert.match(elements["static-page-content"].innerHTML, /Safety Tips/);
+assert.match(elements["static-page-content"].innerHTML, /block them/i, "the safety tips must mention the real Block action, not just Report");
+assert.match(elements["static-page-content"].innerHTML, /Report/, "the safety tips must still mention Report");
+
+context.openStaticPage("reportIssue");
+assert.match(elements["static-page-content"].innerHTML, /Report an Issue/);
+assert.match(elements["static-page-content"].innerHTML, /profile/i, "reporting must be described as available from a profile too, not only a listing");
+assert.match(elements["static-page-content"].innerHTML, /data-static-page="safetyTips"/, "must link to the real Safety Tips page for the Block action");
+
+context.openStaticPage("contentModeration");
+assert.match(elements["static-page-content"].innerHTML, /Content & Moderation/);
+assert.match(elements["static-page-content"].innerHTML, /queue/i, "must honestly describe the real, simple internal review structure (a queue an admin could later work through), not claim a full admin console exists");
+assert.match(elements["static-page-content"].innerHTML, /[Bb]lock/, "must distinguish blocking from reporting");
+
+// A nonexistent static page id must be a clean not-found state, not a crash.
+context.openStaticPage("does-not-exist");
+assert.match(elements["static-page-content"].innerHTML, /This profile could not be found\./);
+
+// Every view switch is a real "new page" -- it must reset scroll to the
+// top, so a footer link opened after scrolling all the way down to the
+// footer doesn't open already scrolled past its own title. This is a
+// general showView() fix, not special-cased to static pages, so it's
+// verified through the same window.scrollTo the real browser would call.
+scrollToCalls.length = 0;
+context.openStaticPage("privacyPolicy");
+assert.deepEqual(scrollToCalls[scrollToCalls.length - 1], [0, 0], "opening any page (a footer link's static page most visibly) must scroll back to the top");
+scrollToCalls.length = 0;
+context.showView("browse-view");
+assert.deepEqual(scrollToCalls[scrollToCalls.length - 1], [0, 0], "this is a general showView() behavior, not special-cased to static pages");
+
+// --- BL-A02: localize long-form static pages ---
+// Every one of the 18 real pages must have a real, non-empty, genuinely
+// distinct (not copy-pasted English) title/body in all 5 non-English
+// languages -- same coverage-loop shape as NM-A26's translation-coverage
+// gate above, applied to STATIC_PAGES's own per-language structure instead.
+{
+  assert.match(js, /const STATIC_PAGES = \{/, "STATIC_PAGES must exist as a real object in app.js");
+  const staticPagesStart = js.indexOf("const STATIC_PAGES = {");
+  const staticPagesEnd = js.indexOf("\nfunction openStaticPage", staticPagesStart);
+  assert.ok(staticPagesEnd > staticPagesStart, "openStaticPage() must be defined after STATIC_PAGES");
+  const staticPagesSrc = js.slice(staticPagesStart, staticPagesEnd);
+  const pageIds = [...staticPagesSrc.matchAll(/\n  (\w+): \{\n    en: \{/g)].map((match) => match[1]);
+  assert.equal(pageIds.length, 18, "all 18 real static pages must be present");
+  let staticPageChecks = 0;
+  for (const pageId of pageIds) {
+    context.setLanguage("en");
+    context.openStaticPage(pageId);
+    const englishHtml = elements["static-page-content"].innerHTML;
+    assert.ok(englishHtml && englishHtml.length > 0, `${pageId}/en must render real, non-empty content`);
+    for (const lang of ["sv", "no", "da", "fi", "is"]) {
+      context.setLanguage(lang);
+      context.openStaticPage(pageId);
+      const translatedHtml = elements["static-page-content"].innerHTML;
+      assert.ok(translatedHtml && translatedHtml.length > 0, `${pageId}/${lang} must render real, non-empty content`);
+      assert.notEqual(translatedHtml, englishHtml, `${pageId}/${lang} must be genuinely translated, not silently falling back to English`);
+      staticPageChecks += 1;
+    }
+  }
+  assert.equal(staticPageChecks, 18 * 5, "sanity: every page must have been checked in every non-English language");
+  context.setLanguage("en");
+  console.log(`PASS: BL-A02 static-page translation coverage -- all 18 real pages resolve to real, non-empty, genuinely-distinct sv/no/da/fi/is content (${staticPageChecks} checks total), not a silent English fallback.`);
+}
+
+// Spot-check real, specific translated legal/safety content (not just
+// "differs from English"), the same way NM-A26's own behavioral spot-checks
+// go beyond its coverage loop.
+context.setLanguage("sv");
+context.openStaticPage("privacyPolicy");
+assert.match(elements["static-page-content"].innerHTML, /Integritetspolicy/i, "the Swedish Privacy Policy must have a real, translated title");
+assert.match(elements["static-page-content"].innerHTML, /GDPR/, "GDPR must still be named as GDPR (the real term used in Swedish GDPR copy too), not silently dropped");
+context.setLanguage("fi");
+context.openStaticPage("safetyTips");
+assert.doesNotMatch(elements["static-page-content"].innerHTML, /Safety Tips/, "Finnish must not silently show the English title");
+context.setLanguage("en");
+
+// Internal cross-reference links inside a translated body must still work,
+// AND their visible label must match the target page's own translated
+// title in that same language -- proving the cross-reference translations
+// are consistent with each other, not just independently non-English.
+context.setLanguage("sv");
+context.openStaticPage("safetyTips");
+const swedishSafetyTipsTitleMatch = /<h2 id="static-page-title">([^<]+)<\/h2>/.exec(elements["static-page-content"].innerHTML);
+assert.ok(swedishSafetyTipsTitleMatch, "the Swedish Safety Tips page must render a real title");
+context.openStaticPage("safeSellingGuide");
+assert.match(elements["static-page-content"].innerHTML, /data-static-page="safetyTips"/, "the Safe Selling Guide must still link to Safety Tips in Swedish");
+assert.match(
+  elements["static-page-content"].innerHTML,
+  new RegExp(`data-static-page="safetyTips">${swedishSafetyTipsTitleMatch[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}<`),
+  "the Safe Selling Guide's embedded Safety Tips link must show the SAME Swedish title as the Safety Tips page itself, not a separately-drifted translation"
+);
+context.openStaticPage("safetyTips");
+assert.match(elements["static-page-content"].innerHTML, new RegExp(swedishSafetyTipsTitleMatch[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "sanity: the Safety Tips page must still show that same title when reopened directly");
+context.setLanguage("en");
+
+// A language switch WHILE a static page is open must re-render it live, in
+// the new language, not stay frozen until the next open.
+context.openStaticPage("termsOfService");
+assert.match(elements["static-page-content"].innerHTML, /Terms of Service/);
+context.setLanguage("sv");
+assert.doesNotMatch(elements["static-page-content"].innerHTML, /Terms of Service/, "a static page open during a language switch must re-render live, not stay frozen in the old language");
+assert.match(elements["static-page-content"].innerHTML, /Användarvillkor|villkor/i, "it must show real Swedish content immediately, without a re-open");
+context.setLanguage("en");
+assert.match(elements["static-page-content"].innerHTML, /Terms of Service/, "switching back to English must also re-render live");
+context.showView("browse-view");
+
+console.log("PASS: BL-A02 static-page localization -- real, distinct, terminology-consistent Swedish/Norwegian/Danish/Finnish/Icelandic content (cross-reference links matching their target page's own translated title), an unknown page id still degrading safely, and a language switch live re-rendering an already-open static page.");
+
+// Country flags reuse the real, existing country-theming mechanism -- no
+// new filtering dimension invented just for the footer.
+context.handleFooterCountryClick("Norway");
+assert.equal(documentElement.style.getPropertyValue("--country-primary"), "#BA0C2F");
+assert.ok(views.find((view) => view.id === "browse-view").classList.contains("active-view"));
+context.applyCountryTheme("Sweden");
+
+// The country flag strip is rendered from the real countryThemes map, not hardcoded markup.
+context.renderFooterCountryFlags();
+assert.equal((elements["footer-country-flags"].innerHTML.match(/data-browse-country="/g) || []).length, 5, "all 5 supported countries must have a flag");
+assert.match(elements["footer-country-flags"].innerHTML, /data-browse-country="Iceland"/);
+
+// The cookie banner: real localStorage-backed persistence, not just a CSS
+// toggle -- shown once, dismissible, and stays dismissed.
+delete fakeLocalStorageStore["fn_cookie_consent"];
+context.initCookieBanner();
+assert.equal(elements["cookie-banner"].hidden, false, "a first-time visitor (no stored consent) must see the cookie notice");
+context.dismissCookieBanner();
+assert.equal(elements["cookie-banner"].hidden, true, "accepting must hide the banner immediately");
+assert.equal(fakeLocalStorageStore["fn_cookie_consent"], "true", "the consent choice must actually be persisted to localStorage, not just an in-memory flag");
+context.initCookieBanner();
+assert.equal(elements["cookie-banner"].hidden, true, "a returning visitor (real stored consent) must not see the banner again");
+
+// Cookie Settings must open the real Cookie Policy page, not a stub.
+delete fakeLocalStorageStore["fn_cookie_consent"];
+context.initCookieBanner();
+context.handleCookieSettingsClick();
+assert.match(elements["static-page-content"].innerHTML, /Cookie Policy/);
+assert.equal(elements["cookie-banner"].hidden, true, "opening Cookie Settings must also count as having seen the notice");
+
+// i18n: the footer's own chrome is fully translated (the long-form static
+// page bodies are a deliberate, documented English-only exception -- see
+// EVIDENCE.md).
+context.setLanguage("sv");
+assert.equal(elements["footer-col-legal"].textContent, "Juridik & Förtroende");
+assert.equal(elements["footer-cta-account"].textContent, "Skapa gratis konto");
+assert.equal(elements["cookie-settings-button"].textContent, "Cookieinställningar");
+context.setLanguage("en");
+assert.equal(elements["footer-col-legal"].textContent, "Legal & Trust");
+
 await loginTestUser("ola@example.com", DEFAULT_TEST_PASSWORD);
 
 context.renderMyListings();
 assert.match(elements["my-listings-content"].innerHTML, /Analytics test bicycle/);
-assert.match(elements["my-listings-content"].innerHTML, new RegExp(`data-toggle-boost="${analyticsListing.id}"`));
+assert.match(elements["my-listings-content"].innerHTML, new RegExp(`data-open-boost-sheet="${analyticsListing.id}"`));
 assert.doesNotMatch(elements["my-listings-content"].innerHTML, /class="account-action boosted"/, "a fresh listing must not show as boosted");
 
-// Boosting is a real mutation: it actually sets sponsored on the listing record.
+// Boosting is a real mutation: it actually sets sponsored + a real expiry on the listing record.
 function findCardHtml(id) {
   const match = elements["listing-grid"].innerHTML.match(new RegExp(`<article class="listing-card" data-id="${id}">[\\s\\S]*?</article>`));
   return match ? match[0] : "";
 }
 
-await context.toggleBoost(analyticsListing.id);
+// --- NM-A18: Boost / Premium (free-first, Stripe-ready) ---
+context.openBoostSheet(analyticsListing.id);
+assert.equal(elements["boost-sheet"].hidden, false, "opening the sheet for a listing you DO own must show it");
+assert.match(elements["boost-sheet-body"].innerHTML, /data-activate-boost="24h"/);
+assert.match(elements["boost-sheet-body"].innerHTML, /data-activate-boost="7d"/);
+assert.match(elements["boost-sheet-body"].innerHTML, /data-activate-boost="30d"/);
+assert.match(elements["boost-sheet-body"].innerHTML, /data-activate-boost="6m"/);
+assert.match(elements["boost-sheet-body"].innerHTML, /data-activate-boost="12m"/);
+assert.match(elements["boost-sheet-body"].innerHTML, /Free for now/, "packages must be marked free while BOOST_PAYMENTS_ENABLED is off");
+
+await context.activateBoostPackage("7d");
+assert.equal(elements["boost-sheet"].hidden, true, "a successful free activation must close the sheet");
+assert.equal(elements["toast"].textContent, "Boost activated.");
 assert.equal(context.getMyListings()[0].sponsored, true, "boosting must set sponsored=true on the real listing, not just update a UI flag");
+assert.equal(context.getMyListings()[0].boostPackage, "7d");
+assert.ok(context.getMyListings()[0].boostExpiresAt > Date.now(), "a real future expiry must be set");
 assert.match(
   findCardHtml(analyticsListing.id),
   /Sponsored/,
@@ -2110,10 +3198,110 @@ assert.match(
 );
 context.renderMyListings();
 assert.match(elements["my-listings-content"].innerHTML, /class="account-action boosted"/);
+assert.match(elements["my-listings-content"].innerHTML, /Boosted until/);
 
-// Ownership check: boosting a listing you do NOT own must be a silent no-op, not a bypassable UI-only gate.
-await context.toggleBoost("oak-table");
+// Re-opening the sheet on an already-boosted listing must show its real
+// status and a way to cancel, not just the package list again.
+context.openBoostSheet(analyticsListing.id);
+assert.match(elements["boost-sheet-body"].innerHTML, /Boosted until/);
+assert.match(elements["boost-sheet-body"].innerHTML, /id="boost-cancel-button"/);
+await context.cancelActiveBoost();
+assert.equal(elements["toast"].textContent, "Boost removed.");
+assert.equal(context.getMyListings()[0].sponsored, false, "cancelling must really clear the boost, not just hide the UI badge");
+assert.equal(context.getMyListings()[0].boostExpiresAt, null);
+context.renderMyListings();
+assert.doesNotMatch(elements["my-listings-content"].innerHTML, /class="account-action boosted"/);
+
+// --- Paid path: when BOOST_PAYMENTS_ENABLED is on, packages show their
+// real price (no "Free for now"), the free-activation endpoint is blocked
+// server-side, and selecting a package attempts a real Stripe checkout --
+// this project has no real Stripe test keys (see EVIDENCE.md), so that
+// attempt surfaces a clear, graceful "not configured" message rather than a
+// crash or a silent no-op. The flag is read live from process.env on every
+// request, so flipping it here needs no server restart. ---
+process.env.BOOST_PAYMENTS_ENABLED = "true";
+await context.loadBoostConfig();
+context.openBoostSheet(analyticsListing.id);
+assert.doesNotMatch(elements["boost-sheet-body"].innerHTML, /Free for now/, "packages must show their real price once payments are enabled, not still claim to be free");
+assert.match(elements["boost-sheet-body"].innerHTML, /19 kr/, "the 24-hour package's real price must be shown");
+assert.match(elements["boost-sheet-body"].innerHTML, /Pay & activate/);
+
+// The UI itself correctly never even attempts the free endpoint once
+// payments are on (it goes straight to checkout, below) -- so the server's
+// OWN independent PAYMENT_REQUIRED safeguard on that endpoint is only ever
+// exercised by a direct request, exactly like this one, proving it's real
+// defense-in-depth and not dead code nothing can reach.
+const directFreeBoostAttempt = await fetch(`${serverOrigin}/api/listings/${analyticsListing.id}/boost`, {
+  method: "POST",
+  headers: { "content-type": "application/json", cookie: testCookieJar },
+  body: JSON.stringify({ packageId: "24h" })
+});
+assert.equal(directFreeBoostAttempt.status, 402);
+assert.equal((await directFreeBoostAttempt.json()).code, "PAYMENT_REQUIRED");
+
+await context.activateBoostPackage("7d");
+assert.equal(elements["toast"].textContent, "Stripe is not configured on this server.", "the UI's own package click must go straight to checkout once payments are enabled, never the free endpoint");
+assert.equal(context.getMyListings()[0].sponsored, false, "a failed checkout attempt must never activate the boost anyway");
+
+process.env.BOOST_PAYMENTS_ENABLED = "false";
+await context.loadBoostConfig();
+
+// Re-boost it for the ranking test below.
+context.openBoostSheet(analyticsListing.id);
+await context.activateBoostPackage("30d");
+
+// Ownership check: opening the sheet for a listing you do NOT own must be a
+// silent no-op, not a bypassable UI-only gate -- and the underlying
+// activation function must independently refuse it too (defense in depth,
+// matching the server's own real ownership check).
+context.openBoostSheet("oak-table");
+assert.equal(elements["boost-sheet"].hidden, true, "the sheet must never open for a listing you don't own");
+await context.activateBoostPackage("24h");
 assert.doesNotMatch(findCardHtml("oak-table"), /Sponsored/, "a user must not be able to boost a listing they don't own");
+
+// Ranking (requirement 5): the boosted listing must rank first in the
+// default "recent" feed, ahead of a listing published deliberately AFTER
+// it -- proving boost, not just recency, explains the order (comparing
+// against an already-existing listing wouldn't isolate the two, since
+// recency alone could already explain that ordering). Published under a
+// throwaway account, not ola's, so it doesn't disturb ola's own
+// My-Listings/Analytics counts checked right after this block.
+const boostedListingSnapshot = context.getMyListings().find((item) => item.id === analyticsListing.id);
+await context.signOutUser();
+await registerTestUser("Ranking Test Publisher", "ranking-test-publisher@example.com", DEFAULT_TEST_PASSWORD);
+await uploadFakePhoto();
+elements["sell-title-input"].value = "Newer Unboosted Listing";
+elements["sell-price-input"].value = "5000";
+elements["sell-category-select"].value = "Free Items";
+context.updateSubtypeVisibility();
+elements["sell-condition-select"].value = "Good";
+elements["sell-location-input"].value = "Test District";
+elements["sell-description-input"].value = "A deliberately more-recent, non-boosted listing for the ranking test.";
+const newerUnboostedListing = await context.publishListing();
+assert.ok(newerUnboostedListing.postedAt >= boostedListingSnapshot.postedAt, "sanity check: this listing really is not older than the boosted one");
+await context.signOutUser();
+await loginTestUser("ola@example.com", DEFAULT_TEST_PASSWORD);
+
+context.resetFilters();
+context.renderListings();
+const recentOrderGrid = elements["listing-grid"].innerHTML;
+const boostedIndex = recentOrderGrid.indexOf("Analytics test bicycle");
+const newerUnboostedIndex = recentOrderGrid.indexOf("Newer Unboosted Listing");
+assert.ok(boostedIndex !== -1 && newerUnboostedIndex !== -1, "both listings must be present");
+assert.ok(boostedIndex < newerUnboostedIndex, "a boosted listing must outrank a more-recently-posted, non-boosted one in the default feed");
+
+context.openFilterSheet();
+elements["filter-sort-select"].value = "price-low";
+context.applyFilters();
+const priceSortedGrid = elements["listing-grid"].innerHTML;
+const firstPriceSortedTitle = /<h3>([^<]+)<\/h3>/.exec(priceSortedGrid);
+assert.ok(firstPriceSortedTitle, "must find at least one listing card");
+assert.notEqual(
+  firstPriceSortedTitle[1],
+  "Analytics test bicycle",
+  "an explicit price-low sort must not be overridden by boost status -- a genuinely cheaper listing (1200 kr is far from the cheapest active listing here) must rank first"
+);
+context.resetFilters();
 
 // Analytics: real numbers computed from real DataService records, checked exactly (not just "> 0").
 await context.handleSaveClick(analyticsListing.id);
@@ -2129,6 +3317,112 @@ assert.match(elements["analytics-content"].innerHTML, /<strong>1<\/strong><span>
 assert.match(elements["analytics-content"].innerHTML, /<strong>1<\/strong><span>Conversations<\/span>/);
 assert.match(elements["analytics-content"].innerHTML, /<strong>1<\/strong><span>Messages received<\/span>/);
 assert.match(elements["analytics-content"].innerHTML, /<strong>1<\/strong><span>Boosted<\/span>/);
+
+// --- NM-A18 follow-up: positional-quota boost rotation + random fairness
+// segment ---
+// shuffleArray must be a real permutation (same elements, just reordered),
+// not a lossy or identity-only shuffle.
+{
+  const original = [1, 2, 3, 4, 5];
+  for (let i = 0; i < 10; i++) {
+    const shuffled = context.shuffleArray(original);
+    assert.deepEqual(shuffled.slice().sort(), original, "shuffleArray must preserve every element exactly once");
+  }
+}
+
+async function publishAndBoostListing(sellerName, sellerEmail, title, packageId) {
+  await registerTestUser(sellerName, sellerEmail, DEFAULT_TEST_PASSWORD);
+  await uploadFakePhoto();
+  elements["sell-title-input"].value = title;
+  elements["sell-price-input"].value = "300";
+  elements["sell-category-select"].value = "Free Items";
+  context.updateSubtypeVisibility();
+  elements["sell-condition-select"].value = "Good";
+  elements["sell-location-input"].value = "Rotation Test District";
+  elements["sell-description-input"].value = "A listing published to exercise the boost rotation and fairness segment.";
+  const listing = await context.publishListing();
+  context.openBoostSheet(listing.id);
+  await context.activateBoostPackage(packageId);
+  await context.signOutUser();
+  return listing;
+}
+
+// analyticsListing is already boosted (30d, from the ranking test above).
+// Boost 4 MORE distinct listings so 5 boosted listings compete for
+// SPONSORED_SLOT_COUNT (4) top-feed slots -- proving the cap actually caps.
+const rotationCandidates = [];
+for (let i = 1; i <= 4; i++) {
+  const boosted = await publishAndBoostListing(
+    `Rotation Seller ${i}`,
+    `rotation-seller-${i}@example.com`,
+    `Rotation Test Listing ${i}`,
+    "24h"
+  );
+  rotationCandidates.push(boosted);
+}
+
+await loginTestUser("ola@example.com", DEFAULT_TEST_PASSWORD);
+context.resetFilters();
+
+const allBoostedIds = [analyticsListing.id, ...rotationCandidates.map((item) => item.id)];
+assert.equal(
+  context.getFilteredListings().filter((item) => allBoostedIds.includes(item.id) && item.sponsored).length,
+  5,
+  "sanity check: exactly 5 listings must be genuinely boosted right now"
+);
+// The seed data also grandfathers a few pre-NM-A18 sponsored listings (see
+// migrateListingBoostColumns), so the real eligible pool for the rotation is
+// broader than just these 5 -- assertions below check against that full
+// pool, not just the ones this test created.
+const everySponsoredId = context.getFilteredListings().filter((item) => item.sponsored).map((item) => item.id);
+assert.ok(everySponsoredId.length > 4, "sanity check: more sponsored listings must exist than SPONSORED_SLOT_COUNT, or the cap test below proves nothing");
+
+// The cap: even with more eligible boosted listings than slots, the
+// rotation must never hand out more than SPONSORED_SLOT_COUNT slots.
+context.refreshBoostRotation();
+assert.equal(context.getSponsoredRotationIds().length, 4, "the rotation must cap at SPONSORED_SLOT_COUNT even when more listings are eligible");
+assert.ok(
+  context.getSponsoredRotationIds().every((id) => everySponsoredId.includes(id)),
+  "every rotation slot must be filled by a genuinely boosted listing"
+);
+
+// Fairness: every boosted listing keeps its real "Sponsored" label on its
+// own card regardless of whether it currently holds a rotation slot --
+// missing a slot this round must never hide that it's genuinely boosted.
+context.renderListings();
+for (const id of allBoostedIds) {
+  assert.match(findCardHtml(id), /Sponsored/, `listing ${id} is genuinely boosted and must always show the Sponsored badge, in or out of the current rotation`);
+}
+
+// Real rotation, not a fixed/hardcoded order: across enough reshuffles of 5
+// candidates capped to 4 slots, more than one distinct set of 4 must appear.
+const observedRotationSets = new Set();
+for (let i = 0; i < 30; i++) {
+  context.refreshBoostRotation();
+  observedRotationSets.add(context.getSponsoredRotationIds().slice().sort().join(","));
+}
+assert.ok(observedRotationSets.size > 1, "the rotation must actually vary across reshuffles, not always pick the same 4 listings");
+
+// The fairness segment: a distinct, separate shelf of NON-boosted listings,
+// also capped, also rendered as real listing cards on the Browse view.
+context.refreshBoostRotation();
+assert.ok(context.getFairnessSpotlightIds().length > 0, "with organic listings present, the fairness segment must not be empty");
+assert.ok(context.getFairnessSpotlightIds().length <= 4, "the fairness segment must respect FAIRNESS_SPOTLIGHT_COUNT");
+assert.ok(
+  context.getFairnessSpotlightIds().every((id) => !allBoostedIds.includes(id)),
+  "the fairness segment must only ever contain non-boosted listings"
+);
+context.renderListings();
+assert.match(elements["fairness-section-container"].innerHTML, /fairness-section/, "the Browse view must render the fairness segment");
+assert.match(elements["fairness-section-container"].innerHTML, /More to discover/);
+const fairnessHtml = elements["fairness-section-container"].innerHTML;
+assert.ok(
+  context.getFairnessSpotlightIds().some((id) => {
+    const match = fairnessHtml.match(new RegExp(`data-id="${id}"`));
+    return Boolean(match);
+  }),
+  "at least one fairness-spotlighted listing must actually appear in the rendered fairness section"
+);
 
 // --- NM-A13: Basic Listing Management for Sellers ---
 // A dedicated throwaway listing, kept separate from analyticsListing (whose
@@ -2170,7 +3464,7 @@ const editedListing = await context.publishListing();
 assert.ok(editedListing, "saving an edit must succeed");
 assert.equal(editedListing.id, managedListing.id, "editing must update the SAME listing, not create a new one");
 assert.equal(editedListing.title, "Vintage record player, price drop");
-assert.equal(editedListing.price, "650 kr");
+assert.equal(editedListing.price, "650", "the STORED price is now just the raw digits -- see NM-A19, formatListingPrice() is what turns it into a real currency string for display");
 assert.equal(editedListing.images.length, 2, "both the existing and the newly added photo must be saved");
 assert.equal(elements["sell-title"].textContent, "Sell in under two minutes", "after saving an edit, the form must return to create mode");
 assert.equal(elements["sell-publish"].textContent, "Publish listing");
@@ -2280,10 +3574,16 @@ await context.signOutUser();
 assert.equal(elements["account-actions"].hidden, true, "account action pills must hide again after logout");
 assert.equal(elements["profile-button"].textContent, "You");
 
-// --- NM-A3: i18n mechanism (en + sv fully wired; no/da/fi/is fall back to en) ---
+// --- NM-A3: i18n mechanism (en + sv fully wired) ---
 assert.equal(context.t("nav.browse", "en"), "Browse");
 assert.equal(context.t("nav.browse", "sv"), "Bläddra");
-assert.equal(context.t("nav.browse", "no"), "Browse", "unfinished languages must fall back to English, not a raw key");
+// The fallback mechanism itself (dict[key] ?? translations.en[key] ?? key)
+// must still correctly fall back to English for a genuinely UNKNOWN key/lang,
+// even though no/da/fi/is are now fully translated (NM-A26) rather than the
+// empty {} stubs this assertion originally guarded.
+assert.equal(context.t("this.key.does.not.exist", "no"), "this.key.does.not.exist", "a truly missing key must fall back to the raw key itself, not throw or return undefined");
+assert.equal(context.t("nav.browse", "xx"), "Browse", "an unknown language code must fall back to English");
+console.log("PASS: NM-A26 fallback-mechanism regression guard -- t()'s own dict[key] ?? translations.en[key] ?? key fallback still works correctly for a genuinely unknown key/language, now that no/da/fi/is are real dictionaries rather than the empty {} stubs this assertion originally guarded.");
 
 context.setLanguage("sv");
 assert.equal(elements["browse-title"].textContent, "Färska fynd nära dig");
@@ -2295,6 +3595,111 @@ assert.equal(
 );
 context.setLanguage("en");
 assert.equal(elements["browse-title"].textContent, "Fresh finds near you");
+
+// --- NM-A26: Norwegian, Danish, Finnish, Icelandic now have REAL, complete
+// translation coverage (previously empty {} stubs that fell back entirely to
+// English -- the single clearest remaining localization gap per PRD_AUDIT.md).
+// Each language is spot-checked through the exact same real UI elements the
+// sv block above just proved, then a real coverage loop below proves this
+// holds for every one of the ~294 keys in the dictionary, not just these 4.
+const NORDIC_SPOT_CHECKS = {
+  no: { browseTitle: "Nye funn nær deg", sellTitle: "Selg på under to minutter", searchPlaceholder: "Hva leter du etter?", browseNav: "Utforsk" },
+  da: { browseTitle: "Friske fund nær dig", sellTitle: "Sælg på under to minutter", searchPlaceholder: "Hvad leder du efter?", browseNav: "Gennemse" },
+  fi: { browseTitle: "Uusia löytöjä lähelläsi", sellTitle: "Myy alle kahdessa minuutissa", searchPlaceholder: "Mitä etsit?", browseNav: "Selaa" },
+  is: { browseTitle: "Nýjar vörur nálægt þér", sellTitle: "Selja á innan við tveimur mínútum", searchPlaceholder: "Hvað ertu að leita að?", browseNav: "Skoða" }
+};
+Object.entries(NORDIC_SPOT_CHECKS).forEach(([lang, expected]) => {
+  context.setLanguage(lang);
+  assert.equal(elements["browse-title"].textContent, expected.browseTitle, `${lang}: browse heading must show its real translation, not English`);
+  assert.equal(elements["sell-title"].textContent, expected.sellTitle, `${lang}: sell heading must show its real translation, not English`);
+  assert.equal(elements["search-input"].getAttribute("placeholder"), expected.searchPlaceholder, `${lang}: search placeholder must show its real translation, not English`);
+  assert.equal(
+    navItems.find((item) => item.dataset.view === "browse-view").textContent,
+    expected.browseNav,
+    `${lang}: the Browse nav tab must show its real translation, not English`
+  );
+  context.setLanguage("en");
+});
+console.log("PASS: NM-A26 behavioral spot-checks -- Norwegian, Danish, Finnish, and Icelandic each render real, distinct, correctly-translated text on the Browse heading, Sell heading, search placeholder, and Browse nav tab -- the same real UI elements the sv block above already proved, now true for all 4 previously-English-fallback languages too.");
+
+// --- NM-A26: the real acceptance gate -- every key in `en` must exist, be
+// non-empty, and genuinely differ from English in sv/no/da/fi/is. Reads the
+// real `translations` object structurally out of app.js's own source (not a
+// hardcoded key list this test could silently drift out of sync with).
+{
+  const translationsStart = js.indexOf("const translations = {");
+  const translationsEnd = js.indexOf("\n};", translationsStart) + 3;
+  assert.ok(translationsStart !== -1 && translationsEnd > translationsStart + 3, "the translations dictionary must be found in app.js");
+  const translationsSnippet = js.slice(translationsStart, translationsEnd).replace("const translations = ", "module.exports = ");
+  const translationsSandbox = { module: { exports: {} } };
+  vm.runInNewContext(translationsSnippet, translationsSandbox);
+  const allTranslations = translationsSandbox.module.exports;
+  const nordicLangs = ["sv", "no", "da", "fi", "is"];
+
+  nordicLangs.forEach((lang) => {
+    assert.ok(allTranslations[lang] && typeof allTranslations[lang] === "object", `translations.${lang} must exist as a real object, not a stub`);
+  });
+
+  const enKeysForCoverage = Object.keys(allTranslations.en);
+  assert.ok(enKeysForCoverage.length > 250, `translations.en should have a real, substantial key set (found ${enKeysForCoverage.length})`);
+
+  // A small, explicit, reviewed exception list of genuine coincidences --
+  // loanwords spelled identically across these languages, or the FindNord/
+  // Micany Investment brand names, which must stay untranslated everywhere.
+  // Anything NOT on this list must be a real, distinct translation; a large
+  // number of unreviewed matches here would mean incomplete translation, not
+  // real linguistic coincidence (per this slice's own acceptance bar).
+  const KNOWN_SAME_AS_ENGLISH = {
+    sv: new Set([
+      "browse.filter", "myListings.statusLabel", "footer.linkMicany",
+      "filter.regionLabel", "sell.regionLabel"
+    ]),
+    no: new Set([
+      "browse.filter", "thread.send", "compose.send", "report.reason.spam",
+      "filter.subtypeLabel", "myListings.boost", "myListings.statusLabel",
+      "footer.linkMicany", "filter.regionLabel", "sell.regionLabel"
+    ]),
+    da: new Set([
+      "browse.filter", "thread.send", "compose.send", "report.reason.spam",
+      "filter.subtypeLabel", "myListings.boost", "myListings.statusLabel",
+      "footer.linkMicany", "filter.regionLabel", "sell.regionLabel"
+    ]),
+    fi: new Set(["footer.linkMicany"]),
+    is: new Set(["footer.linkMicany"])
+  };
+
+  let checkedCount = 0;
+  nordicLangs.forEach((lang) => {
+    enKeysForCoverage.forEach((key) => {
+      const enValue = context.t(key, "en");
+      const value = context.t(key, lang);
+      checkedCount++;
+      assert.equal(typeof value, "string", `${lang}.${key} must resolve to a real string through t()`);
+      assert.ok(value.trim().length > 0, `${lang}.${key} must not be empty/whitespace-only`);
+      const allowedSame = KNOWN_SAME_AS_ENGLISH[lang].has(key);
+      if (!allowedSame) {
+        assert.notEqual(
+          value,
+          enValue,
+          `${lang}.${key} must be a real, distinct translation -- it currently matches the English value verbatim, which means it's silently falling back to English (or, if this is a genuine loanword/brand-name coincidence, add it to the reviewed KNOWN_SAME_AS_ENGLISH list)`
+        );
+      }
+    });
+  });
+  assert.equal(checkedCount, enKeysForCoverage.length * nordicLangs.length, "sanity: every key must have been checked in every language");
+  console.log(`PASS: NM-A26 translation coverage -- all ${enKeysForCoverage.length} keys in translations.en resolve to a real, non-empty, genuinely-distinct value in sv/no/da/fi/is (${checkedCount} checks total), except for the small, explicit, reviewed KNOWN_SAME_AS_ENGLISH set of real loanword/brand-name coincidences.`);
+
+  // Zero legal/static-page content lives in this same flat-string dictionary
+  // mechanism -- STATIC_PAGES is a wholly separate, structured (per-language
+  // title/body) object, untouched by NM-A26, and must stay that way (whole
+  // documents, not short UI-chrome strings, would make `translations`
+  // unreviewable as a flat dictionary). BL-A02 localizes STATIC_PAGES'S OWN
+  // content directly (see that atom's own coverage test below) -- this guard
+  // is only about the two objects never merging, not about STATIC_PAGES
+  // staying English-only (it no longer does).
+  assert.doesNotMatch(js.slice(translationsStart, translationsEnd), /privacyPolicy|termsOfService|cookiePolicy|dataSubjectRights/, "the translations dictionary must never absorb STATIC_PAGES content");
+  console.log("PASS: NM-A26 STATIC_PAGES isolation -- the long-form legal/static pages remain a wholly separate, structured object, never absorbed into the flat translations dictionary, keeping that dictionary reviewable as short UI-chrome strings only.");
+}
 
 // --- NM-A3: country-colored navigation mechanism ---
 assert.equal(documentElement.style.getPropertyValue("--country-primary"), "#006AA7", "Sweden is the default active country");
@@ -2377,15 +3782,1306 @@ assert.equal(elements["sidebar-search-input"].getAttribute("placeholder"), "Sök
 context.setLanguage("en");
 assert.equal(elements["sidebar-browse-label"].textContent, "Browse all");
 
+// --- NM-A19: Currency, Location Depth & Locale Formatting ---
+
+// Static plural/locale unit checks: real Intl.PluralRules categories, not a
+// hardcoded `=== 1` check, and en/sv both still resolve to the exact same
+// visible strings this app has always shown for these exact counts.
+assert.equal(context.countLabel(1, "browse.resultCountSingular", "browse.resultCountPlural"), "listing");
+assert.equal(context.countLabel(0, "browse.resultCountSingular", "browse.resultCountPlural"), "listings");
+assert.equal(context.countLabel(8, "browse.resultCountSingular", "browse.resultCountPlural"), "listings");
+context.setLanguage("sv");
+assert.equal(context.countLabel(1, "browse.resultCountSingular", "browse.resultCountPlural"), "annons");
+assert.equal(context.countLabel(2, "browse.resultCountSingular", "browse.resultCountPlural"), "annonser");
+context.setLanguage("en");
+
+// Relative time: a real, LIVE computation from postedAt, not a frozen
+// string -- and it respects the active language.
+assert.equal(context.formatRelativeTime(Date.now() - 30 * 1000), "now");
+assert.equal(context.formatRelativeTime(Date.now() - 26 * 60 * 60 * 1000), "yesterday");
+assert.equal(context.formatRelativeTime(Date.now() - 3 * 24 * 60 * 60 * 1000), "3 days ago");
+assert.equal(context.formatRelativeTime(null), "", "a listing with no real postedAt must never crash relative-time formatting");
+context.setLanguage("sv");
+assert.equal(context.formatRelativeTime(Date.now() - 3 * 24 * 60 * 60 * 1000), "för 3 dagar sedan");
+context.setLanguage("en");
+
+// Currency: a listing published by a seller whose real, SAVED HOME location
+// is a different country gets that country's own real country/currency --
+// not a hardcoded Swedish default -- and displays in that currency's own
+// real, locale-correct format (Finland's € is the clearest possible proof
+// this isn't just "kr" with a different label, since Norway/Denmark/Iceland
+// all coincidentally also use some form of "kr").
+// BL-A06 (supersedes the old NM-A19 mechanism of driving this off
+// activeCountry): deliberately left on Sweden/Stockholm here -- only the
+// seller's explicitly saved home location changes, via the same Settings
+// save a real user would use -- to prove the listing's country comes from
+// that saved home location, not from whatever the seller merely happens to
+// be browsing.
+await registerTestUser("Finnish Seller", "finnish-seller@example.com", DEFAULT_TEST_PASSWORD);
+elements["settings-home-country-select"].value = "Finland";
+elements["settings-home-region-input"].value = "Uusimaa";
+await context.saveSettings();
+await uploadFakePhoto();
+elements["sell-title-input"].value = "Helsinki Bicycle";
+elements["sell-price-input"].value = "1200";
+elements["sell-category-select"].value = "Sports & Outdoor";
+context.updateSubtypeVisibility();
+elements["sell-condition-select"].value = "Good";
+elements["sell-location-input"].value = "Helsinki";
+elements["sell-region-input"].value = "Uusimaa";
+elements["sell-description-input"].value = "A Finnish listing proving country/currency are real, not hardcoded.";
+context.renderSellPreview();
+assert.match(elements["sell-preview"].innerHTML, /1 200 €/, "the live Sell preview must already show the real € format for the seller's saved home country, before publishing");
+const finnishListing = await context.publishListing();
+assert.equal(finnishListing.country, "Finland", "a listing published by a seller whose saved home country is Finland must really be tagged Finland, not Sweden, even though activeCountry (browse scope) was never touched here");
+assert.equal(finnishListing.currency, "EUR", "Finland's real currency is EUR");
+assert.match(findCardHtml(finnishListing.id), /1 200 €/, "a Finnish listing's Browse card must show real € formatting, never kr");
+assert.match(elements["listing-detail"].innerHTML, /1 200 €/, "the detail page's price must also use real € formatting");
+assert.match(elements["listing-detail"].innerHTML, /<dt>Currency<\/dt><dd>EUR<\/dd>/, "the old hardcoded 'Original listing currency' placeholder must be replaced by the listing's real currency code");
+
+// Editing must NEVER change a listing's country/currency, even when the
+// seller has since switched their own browsing country -- the same
+// "changing country should not silently overwrite" requirement applied to
+// a listing's own data, not just the UI location pill.
+context.applyCountryTheme("Sweden");
+context.startEditListing(finnishListing.id);
+elements["sell-title-input"].value = "Helsinki Bicycle (price drop)";
+const editedFinnishListing = await context.publishListing();
+assert.equal(editedFinnishListing.country, "Finland", "editing a listing while browsing under a different active country must not silently change its real country");
+assert.equal(editedFinnishListing.currency, "EUR");
+assert.match(findCardHtml(editedFinnishListing.id), /€/, "the edited listing must still show € after being edited under Sweden");
+await context.signOutUser();
+context.applyCountryTheme("Sweden");
+
+// --- BL-A06: saved home-location semantics ---
+// A fresh account has no home location saved yet -- defaults to
+// Sweden/Stockholm, matching every other default in this app. Read back
+// through renderSettings() (not a raw variable -- vm.createContext only
+// exposes top-level `function`/`var` bindings to the outer test script, not
+// `let`, so the DOM it renders is the real, observable proof).
+await registerTestUser("BLA06 Tester", "bla06-tester@example.com", DEFAULT_TEST_PASSWORD);
+context.renderSettings();
+assert.equal(elements["settings-home-country-select"].value, "Sweden", "a brand-new account's home location must default to Sweden");
+assert.equal(elements["settings-home-region-input"].value, "Stockholm");
+
+// Switching the BROWSE country (a footer flag click, or geolocation) must
+// never touch the saved home location -- this is the core distinction
+// BL-A06 introduces.
+context.handleFooterCountryClick("Norway");
+assert.equal(elements["active-location"].textContent, "Oslo, Norway", "sanity check on the fixture: the browse country really did switch");
+context.renderSettings();
+assert.equal(elements["settings-home-country-select"].value, "Sweden", "switching the browse country must never change the saved home location");
+assert.equal(elements["settings-home-region-input"].value, "Stockholm");
+
+// The ONLY thing allowed to change the saved home location: an explicit
+// Settings save. Deliberately done here while activeCountry is still
+// Norway (from above), to prove the reverse independence too -- saving a
+// new home location must never touch the current browse scope/filtering.
+elements["settings-home-country-select"].value = "Denmark";
+elements["settings-home-region-input"].value = "Sjælland";
+await context.saveSettings();
+// Re-render from scratch (not just trusting the values we just typed in) --
+// a real proof the save round-tripped through the module's own state, not
+// just left stale DOM behind.
+context.renderSettings();
+assert.equal(elements["settings-home-country-select"].value, "Denmark", "an explicit Settings save must update the saved home location");
+assert.equal(elements["settings-home-region-input"].value, "Sjælland");
+assert.equal(elements["active-location"].textContent, "Oslo, Norway", "saving a new home location must never change the current browse scope");
+
+// The core bug this atom fixes: publishing a listing while BROWSING Norway
+// must stamp the seller's real saved home country (Denmark), never
+// whatever they merely happen to be browsing.
+await uploadFakePhoto();
+elements["sell-title-input"].value = "BLA06 Test Listing";
+elements["sell-price-input"].value = "500";
+elements["sell-category-select"].value = "Electronics";
+context.updateSubtypeVisibility();
+elements["sell-condition-select"].value = "Good";
+elements["sell-location-input"].value = "Copenhagen";
+elements["sell-region-input"].value = "Sjælland";
+elements["sell-description-input"].value = "Proves publish uses the saved home location, not the browse country.";
+const homeLocationTestListing = await context.publishListing();
+assert.equal(homeLocationTestListing.country, "Denmark", "a listing must be stamped with the seller's saved home country, not the browse-scope country (Norway) they merely had active");
+
+// Server-side validation: a garbage homeCountry must be a real 400, not a
+// silent 200 -- same shape as the existing phone-format rejection.
+const invalidHomeCountryResponse = await fetch(`${serverOrigin}/api/auth/me`, {
+  method: "PATCH",
+  headers: { "content-type": "application/json", cookie: testCookieJar },
+  body: JSON.stringify({ homeCountry: "Narnia" })
+});
+assert.equal(invalidHomeCountryResponse.status, 400, "an invalid homeCountry must be rejected server-side, not silently accepted");
+
+// An unauthenticated write must be rejected too, exactly like every other
+// PATCH /auth/me field.
+const unauthedHomeLocationResponse = await fetch(`${serverOrigin}/api/auth/me`, {
+  method: "PATCH",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ homeCountry: "Finland" })
+});
+assert.equal(unauthedHomeLocationResponse.status, 401, "a signed-out request must never be able to set a home location");
+
+await context.signOutUser();
+context.applyCountryTheme("Sweden");
+
+// Guest persistence: a signed-out visitor's home location lives in
+// localStorage -- proven with a real fresh bootstrap (a new vm context,
+// exactly like a real page reload) reading back what a previous guest
+// session saved there. Finland/EUR is deliberately used here (not Iceland)
+// because its € is the one unmistakable, visually-distinct proof (Sweden/
+// Norway/Denmark/Iceland all coincidentally format as some "kr") -- same
+// reasoning the NM-A19 currency test above already relies on.
+fakeLocalStorageStore["fn_home_location"] = JSON.stringify({ country: "Finland", region: "Uusimaa" });
+const guestHomeLocationContext = vm.createContext({
+  document,
+  fetch: makeTestFetch(),
+  navigator: fakeNavigator,
+  localStorage: fakeLocalStorage,
+  window: { location: fakeLocation, history: fakeHistory, addEventListener() {}, scrollTo() {} }
+});
+await vm.runInContext(combinedJs, guestHomeLocationContext);
+// The earlier real publish above reset the shared sell form back to blank
+// (as a real successful publish should) -- set a real price again so the
+// preview has something to format.
+elements["sell-price-input"].value = "500";
+guestHomeLocationContext.renderSellPreview();
+assert.match(
+  elements["sell-preview"].innerHTML,
+  /€/,
+  "a guest's next fresh page load must read the home location a previous guest session saved to localStorage (Finland/€), proven through the live Sell preview since a guest has no Settings panel to read back from"
+);
+delete fakeLocalStorageStore["fn_home_location"];
+// The real, kept-around `context` (not the throwaway guestHomeLocationContext
+// above) must stay usable for every test after this one -- re-render Browse
+// on it to prove it's still live, matching the fixture-sanity pattern used
+// elsewhere in this file after a fresh-context detour.
+context.setActiveScope("Nearby");
+context.renderListings();
+assert.ok(context.getFilteredListings().some((item) => item.id === homeLocationTestListing.id), "the shared context must still be fully functional after the guest fresh-bootstrap detour above -- the real listing published earlier in this BL-A06 block must still be there");
+
+console.log("PASS: BL-A06 saved home-location semantics -- switching the browse country (footer flag/geolocation) never changes the saved home location and vice versa, an explicit Settings save is the ONLY way the saved home location changes, a new listing is stamped with the seller's real saved home country (never the transient browse-scope country), invalid/unauthenticated writes are rejected server-side, and a guest's home location round-trips through localStorage across a real fresh page load.");
+
+// A monthly rental listing's price gets a real, translated "/month" suffix
+// derived from its own category+subtype (Real Estate/For Rent), not a
+// hand-typed string embedded in the stored price -- the seed "city-apartment"
+// listing is exactly this case.
+assert.equal(context.formatListingPrice({ price: "12500", country: "Sweden", category: "Real Estate", subtype: "For Rent" }), "12 500 kr/month");
+context.setLanguage("sv");
+assert.equal(context.formatListingPrice({ price: "12500", country: "Sweden", category: "Real Estate", subtype: "For Rent" }), "12 500 kr/månad");
+context.setLanguage("en");
+assert.equal(
+  context.formatListingPrice({ price: "12500", country: "Sweden", category: "Real Estate", subtype: "For Sale" }),
+  "12 500 kr",
+  "a one-time For Sale listing must never get the /month suffix"
+);
+
+// Location depth: the Nearby/Country/All Nordics scope buttons used to be
+// purely cosmetic (clicking one only changed a label). "Country" now
+// genuinely restricts results to the active country's own real listings.
+context.setActiveScope("Country");
+assert.ok(!context.getFilteredListings().some((item) => item.id === finnishListing.id), "the Country scope, active on Sweden, must exclude a real Finnish listing");
+context.applyCountryTheme("Finland");
+context.renderListings();
+assert.ok(context.getFilteredListings().some((item) => item.id === finnishListing.id), "switching the Country scope's own country to Finland must now include the Finnish listing");
+context.applyCountryTheme("Sweden");
+context.setActiveScope("All Nordics");
+assert.ok(context.getFilteredListings().some((item) => item.id === finnishListing.id), "All Nordics must never filter by country");
+context.setActiveScope("Nearby");
+assert.ok(context.getFilteredListings().some((item) => item.id === finnishListing.id), "Nearby must stay unfiltered by country, matching its pre-NM-A19 behavior");
+
+// Explicit country intent (a footer flag click) must keep Browse/Sell/
+// Filters/the location pill all consistent -- before this fix, the pill
+// stayed "Stockholm, Sweden" forever regardless of which country was
+// actually themed/active, a real inconsistency.
+context.handleFooterCountryClick("Norway");
+assert.equal(elements["active-location"].textContent, "Oslo, Norway", "an explicit country switch must update the visible location pill, not leave it silently stale");
+
+// Real bug this regression-tests: showView("browse-view") -- part of
+// handleFooterCountryClick -- is a no-op when Browse is ALREADY the active
+// view (the common case: a user browsing clicks a footer flag without
+// switching tabs), so the grid must be explicitly re-rendered by
+// handleFooterCountryClick itself, not left showing a stale Country-scope
+// result set from before the country switch.
+context.setActiveScope("Country");
+context.applyCountryTheme("Sweden");
+context.handleFooterCountryClick("Finland");
+assert.ok(
+  context.getFilteredListings().every((item) => item.id !== finnishListing.id || item.country === "Finland"),
+  "sanity check on the fixture itself"
+);
+assert.match(elements["listing-grid"].innerHTML, /Helsinki Bicycle/, "clicking a footer flag while already on Browse with Country scope active must immediately re-render the grid for the NEW country, not require a separate manual refresh");
+context.setActiveScope("Nearby");
+context.handleFooterCountryClick("Sweden");
+assert.equal(elements["active-location"].textContent, "Stockholm, Sweden");
+
+// --- NM-A20: Trust & Safety Content + Report / Block Flows ---
+const nma20TargetListing = await publishTestListing("NMA20 Target", "nma20-target@example.com", "NMA20 Target Listing");
+const nma20TargetSellerId = nma20TargetListing.sellerId;
+const reporter = await registerTestUser("NMA20 Reporter", "nma20-reporter@example.com", DEFAULT_TEST_PASSWORD);
+
+// Report is now a real modal (reason + optional details), not an instant
+// single click that recorded nothing about why.
+context.openListing(nma20TargetListing.id);
+context.handleReportListingClick(nma20TargetListing.id);
+assert.equal(elements["report-modal"].hidden, false, "a signed-in user's report click must open the real modal, not fire instantly");
+assert.equal(elements["report-modal-title"].textContent, "Report this listing");
+elements["report-reason-select"].value = "scam_or_fraud";
+elements["report-details-input"].value = "Seller asked for payment outside the platform.";
+await context.submitReportModal();
+assert.equal(elements["report-modal"].hidden, true, "a successful report must close the modal");
+assert.equal(elements["toast"].textContent, "Thanks — your report has been submitted for review.", "the old '(mocked)... arrives in a later slice' wording must be gone now that this IS that slice");
+
+const reportsAfterListing = await (await fetch(`${serverOrigin}/api/reports`, { headers: { cookie: adminCookie } })).json();
+const listingReport = reportsAfterListing.find((item) => item.listingId === nma20TargetListing.id);
+assert.ok(listingReport, "the report must be a real, queryable record");
+assert.equal(listingReport.reason, "scam_or_fraud");
+assert.equal(listingReport.details, "Seller asked for payment outside the platform.");
+assert.equal(listingReport.status, "open", "a report must land in a simple internal structure (a real status field) an admin could later review");
+assert.equal(listingReport.reporterId, reporter.id);
+
+// Report is also available from a profile (requirement 1), and Block sits
+// right next to it there.
+await context.openSellerProfile(nma20TargetSellerId);
+assert.match(elements["seller-profile"].innerHTML, new RegExp(`data-report-user="${nma20TargetSellerId}"`));
+assert.match(elements["seller-profile"].innerHTML, new RegExp(`data-block-user="${nma20TargetSellerId}"`));
+context.handleReportUserClick(nma20TargetSellerId);
+assert.equal(elements["report-modal-title"].textContent, "Report this user");
+elements["report-reason-select"].value = "harassment";
+elements["report-details-input"].value = "";
+await context.submitReportModal();
+assert.equal(elements["toast"].textContent, "Thanks — your report has been submitted for review.");
+
+const reportsAfterUser = await (await fetch(`${serverOrigin}/api/reports`, { headers: { cookie: adminCookie } })).json();
+const userReport = reportsAfterUser.find((item) => item.reportedUserId === nma20TargetSellerId);
+assert.ok(userReport, "reporting a user must produce a real record with reportedUserId set");
+assert.equal(userReport.reason, "harassment");
+
+// Self-reporting is rejected server-side -- the UI never exposes this path
+// at all (Report/Block only render on someone ELSE's profile), so this is
+// checked via a direct request, the same defense-in-depth pattern NM-A18
+// used for the PAYMENT_REQUIRED safeguard.
+const selfReportRes = await fetch(`${serverOrigin}/api/reports`, {
+  method: "POST",
+  headers: { "content-type": "application/json", cookie: testCookieJar },
+  body: JSON.stringify({ reportedUserId: reporter.id, reason: "other" })
+});
+assert.equal(selfReportRes.status, 400);
+assert.equal((await selfReportRes.json()).code, "REPORT_NOT_FOR_SELF");
+
+// A report naming neither a listing nor a user is rejected too.
+const noTargetReportRes = await fetch(`${serverOrigin}/api/reports`, {
+  method: "POST",
+  headers: { "content-type": "application/json", cookie: testCookieJar },
+  body: JSON.stringify({ reason: "other" })
+});
+assert.equal(noTargetReportRes.status, 400);
+assert.equal((await noTargetReportRes.json()).code, "REPORT_TARGET_REQUIRED");
+
+// Block: start a real conversation first, so blocking's effect on BOTH
+// listings and messages can be proven together, not just listings alone.
+await context.handleMessageClick(nma20TargetListing.id);
+assert.equal(elements["compose-modal"].hidden, false);
+elements["compose-message-input"].value = "Hi, is this still available?";
+await context.sendComposedMessage();
+assert.equal(elements["toast"].textContent, "Message sent. View it in your Inbox.");
+
+context.renderInbox();
+const inboxHtmlBeforeBlock = elements["inbox-content"].innerHTML;
+assert.match(inboxHtmlBeforeBlock, /NMA20 Target Listing/, "sanity check: the conversation must be visible before any block");
+context.renderListings();
+assert.match(elements["listing-grid"].innerHTML, /NMA20 Target Listing/, "sanity check: the listing must be visible before any block");
+
+// The reporter has exactly one conversation at this point (freshly
+// registered), so the first (only) data-open-thread id in the rendered
+// Inbox is this one -- read from the real DOM rather than the cache array
+// directly (a `let` module-scope binding never becomes a vm context
+// property the way a function declaration does -- the same reason NM-A18's
+// boost rotation needed dedicated getter functions).
+const openThreadMatch = /data-open-thread="([^"]+)"/.exec(inboxHtmlBeforeBlock);
+assert.ok(openThreadMatch, "must find the real conversation id in the rendered Inbox");
+const nma20ConversationId = openThreadMatch[1];
+context.openThread(nma20ConversationId);
+assert.match(elements["thread-snapshot"].innerHTML, new RegExp(`data-block-user="${nma20TargetSellerId}"`), "Block must also be available directly from a conversation (requirement 1's 'from profile or conversation')");
+assert.doesNotMatch(elements["thread-snapshot"].innerHTML, /Unblock/, "not blocked yet");
+
+await context.toggleBlockUser(nma20TargetSellerId);
+assert.equal(elements["toast"].textContent, "User blocked. You won't see their listings or messages.");
+
+// "Stop seeing another user's listings" -- immediate, real, client-side filtering.
+context.renderListings();
+assert.doesNotMatch(elements["listing-grid"].innerHTML, /NMA20 Target Listing/, "a blocked seller's listing must disappear from Browse immediately");
+assert.ok(!context.getFilteredListings().some((item) => item.id === nma20TargetListing.id));
+
+// "Stop seeing... messages" -- the conversation itself disappears from the
+// Inbox list, and since it was the currently-open thread, blocking must
+// have navigated away from it rather than leaving a dead thread open.
+assert.doesNotMatch(elements["inbox-content"].innerHTML, /NMA20 Target Listing/, "a conversation with a blocked user must disappear from the Inbox list");
+assert.ok(views.find((view) => view.id === "inbox-view").classList.contains("active-view"), "blocking mid-thread must navigate away, since that thread is no longer visible");
+
+// Trying to message a blocked user again must fail with a clear message, not a crash or a silent no-op.
+await context.handleMessageClick(nma20TargetListing.id);
+elements["compose-message-input"].value = "Hello?";
+await context.sendComposedMessage();
+assert.equal(elements["toast"].textContent, "You can't message this user.", "attempting to message a blocked user must surface a clear error, not silently fail or crash");
+
+// The profile's own Block button must reflect the current state too.
+await context.openSellerProfile(nma20TargetSellerId);
+assert.match(elements["seller-profile"].innerHTML, new RegExp(`class="secondary-action blocked" data-block-user="${nma20TargetSellerId}"`), "the profile must show the blocked styling/label once the seller is actually blocked");
+assert.match(elements["seller-profile"].innerHTML, /Unblock/);
+
+// Unblocking must reverse everything -- listing and conversation both come
+// straight back, with no data ever having been lost.
+await context.toggleBlockUser(nma20TargetSellerId);
+assert.equal(elements["toast"].textContent, "User unblocked.");
+context.renderListings();
+assert.match(elements["listing-grid"].innerHTML, /NMA20 Target Listing/, "unblocking must bring the listing straight back");
+context.renderInbox();
+assert.match(elements["inbox-content"].innerHTML, /NMA20 Target Listing/, "unblocking must bring the conversation straight back -- it was hidden, never deleted");
+
+await context.signOutUser();
+
+// --- NM-A21 follow-up: Settings under Profile (Contact info) ---
+await registerTestUser("Settings Tester", "settings-tester@example.com", DEFAULT_TEST_PASSWORD);
+context.renderSettings();
+assert.equal(elements["settings-form-wrap"].hidden, false);
+assert.equal(elements["settings-signed-out"].hidden, true);
+assert.equal(elements["settings-email-display"].value, "settings-tester@example.com", "email must show the real account email, read-only");
+assert.equal(elements["settings-phone-input"].value, "", "a fresh account has no phone set yet");
+elements["settings-phone-input"].value = "+46 70 123 45 67";
+await context.saveSettings();
+assert.equal(elements["toast"].textContent, "Settings saved.");
+context.renderSettings();
+assert.equal(elements["settings-phone-input"].value, "+46 70 123 45 67", "the saved phone must persist and show on re-render");
+
+elements["settings-phone-input"].value = "not-a-real-phone!!!";
+await context.saveSettings();
+assert.equal(elements["settings-error"].hidden, false, "an invalid phone must show a real inline error, not a silent failure");
+
+await context.signOutUser();
+context.renderSettings();
+assert.equal(elements["settings-form-wrap"].hidden, true, "a signed-out visitor must never see the settings form");
+assert.equal(elements["settings-signed-out"].hidden, false);
+
+// --- NM-A21: Minimal Admin Moderation Queue (Internal) ---
+
+// Guests must not be able to reach it -- checked both ways: the client-side
+// access-denied render, AND (the REAL gate) every underlying request is
+// independently requireAdmin'd server-side regardless of what the client does.
+context.renderAccountActions();
+assert.equal(elements["account-actions"].hidden, true, "a guest has no account-actions bar at all, so no admin entry point either");
+await context.openAdminQueue();
+assert.match(elements["admin-content"].innerHTML, /You don't have access to this page\./);
+
+const guestReportsAttempt = await fetch(`${serverOrigin}/api/reports`);
+assert.equal(guestReportsAttempt.status, 401, "the real admin data must reject a guest server-side too, not just hide the button");
+
+// An ordinary signed-in (non-admin) user must not reach it either.
+await registerTestUser("Ordinary NMA21 User", "ordinary-nma21@example.com", DEFAULT_TEST_PASSWORD);
+context.renderAccountActions();
+assert.doesNotMatch(elements["account-actions"].innerHTML, /data-view="admin-view"/, "a normal user's own DOM must never even contain a link to the moderation queue");
+await context.openAdminQueue();
+assert.match(elements["admin-content"].innerHTML, /You don't have access to this page\./, "a normal signed-in user must still be refused, not just guests");
+
+const normalReportsAttempt = await fetch(`${serverOrigin}/api/reports`, { headers: { cookie: testCookieJar } });
+assert.equal(normalReportsAttempt.status, 403, "the real admin data must reject a normal signed-in user server-side too");
+await context.signOutUser();
+
+// The real, designated admin account (registered earlier, is_admin=1 for
+// real -- see adminRegistration near the top of this function) CAN reach it.
+await loginTestUser("nma21-admin@example.com", "correcthorse1");
+context.renderAccountActions();
+assert.match(elements["account-actions"].innerHTML, /data-view="admin-view"/, "the real admin's own account-actions bar must include the moderation queue entry point");
+
+await context.openAdminQueue();
+const adminQueueHtml = elements["admin-content"].innerHTML;
+assert.match(adminQueueHtml, /Scam or fraud/, "the earlier listing report must appear, with its real reason");
+assert.match(adminQueueHtml, /Harassment or abuse/, "the earlier user report must appear too, with its real reason");
+assert.match(adminQueueHtml, new RegExp(`Listing: NMA20 Target Listing|Listing: ${nma20TargetListing.id}`), "a listing report must show a real, resolved listing title, not just a bare id");
+assert.match(adminQueueHtml, /User: NMA20 Target/, "a user report must show a real, resolved reporter/target name");
+assert.match(adminQueueHtml, /Seller asked for payment outside the platform\./, "the real submitted details must be visible to the reviewer");
+assert.match(adminQueueHtml, new RegExp(`data-admin-report-status="${listingReport.id}" data-status="reviewed"`));
+assert.match(adminQueueHtml, new RegExp(`data-admin-toggle-hide-listing="${nma20TargetListing.id}"`), "a listing report must offer a real Hide action");
+assert.match(adminQueueHtml, new RegExp(`data-admin-toggle-flag-user="${nma20TargetSellerId}"`), "a user report must offer a real Flag action");
+
+// Mark Reviewed / Dismiss (requirement 3).
+await context.handleAdminReportStatusClick(listingReport.id, "reviewed");
+assert.match(elements["admin-content"].innerHTML, new RegExp(`admin-status-reviewed`), "the listing report's status must really change server-side, reflected on re-render");
+await context.handleAdminReportStatusClick(userReport.id, "dismissed");
+assert.match(elements["admin-content"].innerHTML, /admin-status-dismissed/);
+
+// Hide / unhide a reported listing (requirement 3) -- a real moderation
+// action, visible to EVERYONE (unlike NM-A20's per-viewer Block), verified
+// through the exact same Browse filter every guest/user actually sees.
+await context.handleAdminToggleHideListingClick(nma20TargetListing.id, false);
+assert.ok(!context.getFilteredListings().some((item) => item.id === nma20TargetListing.id), "an admin-hidden listing must disappear from Browse for everyone");
+await context.handleAdminToggleHideListingClick(nma20TargetListing.id, true);
+assert.ok(context.getFilteredListings().some((item) => item.id === nma20TargetListing.id), "unhiding must bring it straight back");
+
+// Optionally flag a user -- "a simple status is enough" (requirement 3).
+await context.handleAdminToggleFlagUserClick(nma20TargetSellerId, false);
+assert.match(elements["admin-content"].innerHTML, /Unflag user/, "flagging must be reflected as a real, persisted toggle");
+await context.handleAdminToggleFlagUserClick(nma20TargetSellerId, true);
+assert.doesNotMatch(elements["admin-content"].innerHTML, /Unflag user/);
+
+await context.signOutUser();
+
+// --- NM-A22: Final Parity Pass + Honest Re-audit -- two small, high-leverage
+// fixes found by actually verifying current behavior rather than assuming
+// old EVIDENCE.md write-ups still held. ---
+
+// Fix 1: nothing used to stop a seller from messaging themselves about
+// their own listing (server-side dedup in NM-A20 only stopped the crash,
+// not the option). Real marketplaces never show that CTA on your own listing.
+const nma22SellerListing = await publishTestListing("NMA22 Seller", "nma22-seller@example.com", "NMA22 Audit Listing");
+const nma22SellerId = nma22SellerListing.sellerId;
+await registerTestUser("NMA22 Buyer", "nma22-buyer@example.com", DEFAULT_TEST_PASSWORD);
+context.openListing(nma22SellerListing.id);
+assert.match(elements["listing-detail"].innerHTML, /id="message-seller"/, "a DIFFERENT signed-in user must still see the real Message CTA");
+assert.match(elements["listing-detail"].innerHTML, /id="suggested-opener"/);
+
+await context.handleMessageClick(nma22SellerListing.id);
+elements["compose-message-input"].value = "Is this still available?";
+await context.sendComposedMessage();
+context.renderInbox();
+assert.match(elements["inbox-content"].innerHTML, /NMA22 Seller/, "the BUYER's own inbox must still show the real seller's name -- unchanged, correct behavior");
+await context.signOutUser();
+
+// Fix 2: since NM-A20 started recording the seller as a real conversation
+// participant (needed for Block to enforce correctly), the seller NOW
+// genuinely sees this conversation in their own Inbox -- but before this
+// fix, the row showed the SELLER'S OWN name (listing.seller is always the
+// seller), as if they were messaging themselves.
+await loginTestUser("nma22-seller@example.com", DEFAULT_TEST_PASSWORD);
+context.renderInbox();
+assert.match(elements["inbox-content"].innerHTML, /NMA22 Audit Listing/, "the seller must genuinely see the buyer's conversation in their own Inbox (the real NM-A20 participant-model fix)");
+assert.doesNotMatch(elements["inbox-content"].innerHTML, />NMA22 Seller</, "the seller's own Inbox row must never show their OWN name as if they were messaging themselves");
+assert.match(elements["inbox-content"].innerHTML, /Buyer/, "the seller's own Inbox row must show a real, honest generic label instead");
+
+context.openListing(nma22SellerListing.id);
+assert.doesNotMatch(elements["listing-detail"].innerHTML, /id="message-seller"/, "the seller must never see a Message CTA on their own listing");
+assert.doesNotMatch(elements["listing-detail"].innerHTML, /id="suggested-opener"/);
+
+await context.signOutUser();
+
+// --- NM-A23: Password Reset / Forgot-Password Flow ---
+// Captures the real reset link `sendResetEmail` writes to the server
+// console during `action()` -- the same real seam a developer (or, here,
+// this suite) reads the link from, since no real email provider exists in
+// this environment. Returns the raw token (NM-A25: now the last path
+// segment of a real `/reset-password/:token` URL, not a query-string
+// value -- see scripts/auth.js's own resetUrl), or null if nothing was
+// logged (the real, expected outcome for a nonexistent account, since
+// /forgot-password must stay fully generic either way).
+async function captureResetToken(action) {
+  const originalLog = console.log;
+  let capturedUrl = null;
+  console.log = (...args) => {
+    const match = /\[FindNord\] Password reset requested for [^:]+: (\S+)/.exec(args.join(" "));
+    if (match) capturedUrl = match[1];
+  };
+  try {
+    await action();
+  } finally {
+    console.log = originalLog;
+  }
+  return capturedUrl ? new URL(capturedUrl).pathname.split("/").pop() : null;
+}
+
+function forgotPasswordRequest(email) {
+  return fetch(`${serverOrigin}/api/auth/forgot-password`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email })
+  });
+}
+
+function resetPasswordRequest(token, password) {
+  return fetch(`${serverOrigin}/api/auth/reset-password`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token, password })
+  });
+}
+
+// 1. A real account's own reset flow, end to end, direct against the real
+// server -- mirrors the standalone backend smoke test this slice was
+// required to write and run BEFORE any frontend work began.
+const resetFlowUser = await registerRealUserDirectly("NMA23 Reset Flow", "nma23-reset@example.com", DEFAULT_TEST_PASSWORD);
+const meBeforeReset = await (await fetch(`${serverOrigin}/api/auth/me`, { headers: { cookie: resetFlowUser.cookie } })).json();
+assert.equal(meBeforeReset.email, "nma23-reset@example.com", "the pre-reset session must genuinely authenticate first");
+
+const resetToken = await captureResetToken(() => forgotPasswordRequest("nma23-reset@example.com"));
+assert.ok(resetToken && resetToken.length >= 32, "a real account must produce a real, long random reset token");
+
+// Requirement 1: a NONEXISTENT account gets an IDENTICAL response and no
+// link at all -- the real proof that /forgot-password never leaks
+// account existence, not just a claim about it.
+const fakeAccountResponse = await forgotPasswordRequest("nma23-does-not-exist@example.com");
+const noTokenForFakeAccount = await captureResetToken(() => forgotPasswordRequest("nma23-does-not-exist@example.com"));
+assert.equal(fakeAccountResponse.status, 200, "a nonexistent account must still get a 200, never a different status");
+const fakeAccountBody = await fakeAccountResponse.json();
+const realAccountResponse = await forgotPasswordRequest("nma23-reset@example.com");
+const realAccountBody = await realAccountResponse.json();
+assert.equal(realAccountResponse.status, fakeAccountResponse.status, "a real and a fake account must get the exact same HTTP status");
+assert.deepEqual(realAccountBody, fakeAccountBody, "a real and a fake account must get the exact same response body -- the literal proof of requirement 1");
+assert.equal(noTokenForFakeAccount, null, "no reset link may ever be generated/logged for a nonexistent account");
+
+// Invalid token rejected.
+const invalidTokenRes = await resetPasswordRequest("not-a-real-token-at-all", "somenewpassword1");
+assert.equal(invalidTokenRes.status, 400);
+assert.equal((await invalidTokenRes.json()).code, "INVALID_RESET_TOKEN");
+
+// Too-short password rejected -- and the token must remain valid/unused afterward.
+const tooShortRes = await resetPasswordRequest(resetToken, "short");
+assert.equal(tooShortRes.status, 400);
+assert.equal((await tooShortRes.json()).code, "PASSWORD_TOO_SHORT");
+
+// The real reset itself.
+const realResetRes = await resetPasswordRequest(resetToken, "brandnewpassword1");
+assert.equal(realResetRes.status, 200);
+assert.equal((await realResetRes.json()).success, true);
+
+// Requirement: the OLD session, captured before the reset, must now be dead.
+const meAfterReset = await (await fetch(`${serverOrigin}/api/auth/me`, { headers: { cookie: resetFlowUser.cookie } })).json();
+assert.equal(meAfterReset, null, "a session captured before the reset must no longer authenticate after it -- every session must die on reset");
+
+// Requirement: old password rejected, new password logs in.
+const oldPasswordLogin = await fetch(`${serverOrigin}/api/auth/login`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ email: "nma23-reset@example.com", password: DEFAULT_TEST_PASSWORD })
+});
+assert.equal(oldPasswordLogin.status, 401);
+const newPasswordLogin = await fetch(`${serverOrigin}/api/auth/login`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ email: "nma23-reset@example.com", password: "brandnewpassword1" })
+});
+assert.equal(newPasswordLogin.status, 200);
+assert.equal((await newPasswordLogin.json()).email, "nma23-reset@example.com");
+
+// Requirement: a single-use token rejected on reuse.
+const reuseRes = await resetPasswordRequest(resetToken, "anotherpassword1");
+assert.equal(reuseRes.status, 400);
+assert.equal((await reuseRes.json()).code, "RESET_TOKEN_USED");
+
+// Requirement: an expired token rejected. The suite can't wait 45 real
+// minutes, so `testDb` (the real handle behind the real server) backdates
+// THIS token's real expires_at column -- the same real column the route
+// itself checks -- rather than faking the rejection any other way.
+const expiringToken = await captureResetToken(() => forgotPasswordRequest("nma23-reset@example.com"));
+testDb.prepare("UPDATE password_reset_tokens SET expires_at = ? WHERE token = ?").run(Date.now() - 1000, expiringToken);
+const expiredTokenRes = await resetPasswordRequest(expiringToken, "yetanotherpassword1");
+assert.equal(expiredTokenRes.status, 400);
+assert.equal((await expiredTokenRes.json()).code, "RESET_TOKEN_EXPIRED");
+
+// Requirement 7: a Google-only account (no password_hash ever set) gets an
+// honest, distinct rejection -- surfaced only once a real valid token for
+// THAT account is presented, never at /forgot-password (which stayed fully
+// generic above), so this reveals nothing about any other account.
+const googleOnlyIdToken = makeFakeGoogleIdToken({ payload: { email: "nma23-google-only@example.com", sub: "nma23-google-only-sub" } });
+const googleOnlyRegisterRes = await fetch(`${serverOrigin}/api/auth/google`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ credential: googleOnlyIdToken })
+});
+assert.equal(googleOnlyRegisterRes.status, 200, "the real Google sign-in flow must create the account for real");
+const googleOnlyToken = await captureResetToken(() => forgotPasswordRequest("nma23-google-only@example.com"));
+assert.ok(googleOnlyToken, "a Google-only account still gets a real token/link -- forgot-password's response must stay indistinguishable from any other account");
+const googleOnlyResetRes = await resetPasswordRequest(googleOnlyToken, "somepassword1");
+assert.equal(googleOnlyResetRes.status, 400);
+assert.equal((await googleOnlyResetRes.json()).code, "GOOGLE_ACCOUNT_NO_PASSWORD");
+
+console.log("PASS: NM-A23 backend password-reset flow -- generic response, real single-use expiring token, session invalidation, and the Google-only-account honest rejection all verified directly against the real server.");
+
+// 2. The real UI, through the exact same vm-sandboxed app.js the rest of
+// this suite drives -- not a bypass of DataService.
+context.setAuthMode("auth", "login");
+context.openForgotPasswordModal();
+elements["forgot-password-email-input"].value = "";
+await context.handleForgotPasswordSubmit({ preventDefault() {} });
+assert.equal(elements["forgot-password-error"].hidden, false, "an empty email must show a real client-side error, not silently no-op");
+
+const frontendUser = await registerRealUserDirectly("NMA23 Frontend Flow", "nma23-frontend@example.com", DEFAULT_TEST_PASSWORD);
+elements["forgot-password-email-input"].value = "nma23-frontend@example.com";
+const frontendToken = await captureResetToken(() => context.handleForgotPasswordSubmit({ preventDefault() {} }));
+assert.equal(elements["forgot-password-success"].hidden, false, "a real request must show the real generic confirmation");
+assert.equal(elements["forgot-password-success"].textContent, "If that email exists, we've sent a reset link.");
+assert.ok(frontendToken, "submitting the real form must produce a real, console-logged token");
+context.closeForgotPasswordModal();
+
+// The set-new-password form's own client-side "at least 8 characters" check.
+context.openResetPasswordModal(frontendToken);
+elements["reset-password-input"].value = "short";
+await context.handleResetPasswordSubmit({ preventDefault() {} });
+assert.equal(elements["reset-password-error"].hidden, false);
+assert.equal(elements["reset-password-error"].textContent, "Password must be at least 8 characters.");
+
+// The real, successful reset through the real UI form.
+elements["reset-password-input"].value = "frontendnewpass1";
+await context.handleResetPasswordSubmit({ preventDefault() {} });
+assert.equal(elements["reset-password-success"].hidden, false, "a real successful reset must show a real success message");
+assert.equal(elements["reset-password-form"].hidden, true, "the form must hide itself once the reset actually succeeds, not stay open to be resubmitted");
+
+// Confirm the reset actually took effect: old password dead, new one works.
+const frontendOldLogin = await loginTestUser("nma23-frontend@example.com", DEFAULT_TEST_PASSWORD);
+assert.equal(frontendOldLogin, null, "the frontend flow's old password must be genuinely dead, not just claimed dead");
+const frontendNewLogin = await loginTestUser("nma23-frontend@example.com", "frontendnewpass1");
+assert.equal(frontendNewLogin.email, "nma23-frontend@example.com", "the frontend flow's new password must genuinely work");
+await context.signOutUser();
+
+// Reusing the same token through the real UI surfaces the real, translated "already used" error.
+context.openResetPasswordModal(frontendToken);
+elements["reset-password-input"].value = "someotherpassword1";
+await context.handleResetPasswordSubmit({ preventDefault() {} });
+assert.equal(elements["reset-password-error"].hidden, false);
+assert.equal(elements["reset-password-error"].textContent, "This reset link has already been used.");
+context.closeResetPasswordModal();
+
+console.log("PASS: NM-A23 frontend flow -- the real forgot-password/reset-password modals, driven the same way a real user would, produce a real password change and a real, translated single-use rejection on reuse.");
+
+// Sections 1+2 above made 8 real /reset-password calls -- coincidentally
+// exactly reset-password's own real per-IP limit (max 8/hour; every call
+// anywhere in this suite shares one IP-only bucket, see scripts/auth.js).
+// Cleared here so this next, unrelated functional test gets a real, clean
+// budget rather than tripping the very rate limiter this slice built,
+// which is exactly what happened before this line was added.
+resetRateLimiterState();
+
+// 3. NM-A25 update: the bootstrap-time reset-password entry point (originally
+// NM-A23's `?resetToken=...` query-string stopgap, requirement 6) now goes
+// through the real `/reset-password/:token` route -- a fresh bootstrap run,
+// in a NEW vm context sharing the same fake `document` (elements/views),
+// with `window.location.pathname` carrying a fresh token, proving the app
+// opens straight into the set-new-password view on a real fresh page load
+// of that exact URL, through the SAME parseRoute()/applyRoute() mechanism
+// exercised for listings/profiles/static pages in the NM-A25 section below.
+const bootstrapStopgapToken = await captureResetToken(() => forgotPasswordRequest("nma23-frontend@example.com"));
+const resetLinkContext = vm.createContext({
+  document,
+  fetch: makeTestFetch(),
+  navigator: fakeNavigator,
+  localStorage: fakeLocalStorage,
+  window: {
+    location: {
+      href: `http://localhost:4173/reset-password/${bootstrapStopgapToken}`,
+      origin: "http://localhost:4173",
+      pathname: `/reset-password/${bootstrapStopgapToken}`,
+      search: ""
+    },
+    addEventListener() {},
+    scrollTo() {}
+  }
+});
+await vm.runInContext(combinedJs, resetLinkContext);
+assert.equal(
+  elements["reset-password-modal"].hidden,
+  false,
+  "landing on a real /reset-password/:token link must open the set-new-password view automatically, through the real routing mechanism"
+);
+// (pendingResetToken itself is a `let`-scoped module variable inside the
+// sandboxed script, not a property vm exposes on the context object, so it
+// can't be read back from out here -- the functional proof that bootstrap
+// parsed the real token out of the URL correctly is the reset actually
+// succeeding below, through this exact context.)
+elements["reset-password-input"].value = "stopgapnewpass1";
+await resetLinkContext.handleResetPasswordSubmit({ preventDefault() {} });
+assert.equal(elements["reset-password-success"].hidden, false, "the path-carried token must complete a real reset, not just open the modal");
+const stopgapLogin = await loginTestUser("nma23-frontend@example.com", "stopgapnewpass1");
+assert.equal(stopgapLogin.email, "nma23-frontend@example.com", "the password set via the real /reset-password/:token route must genuinely work");
+await context.signOutUser();
+
+console.log("PASS: NM-A25 password-reset routing -- NM-A23's reset flow now runs through the real /reset-password/:token route (not a query-string stopgap) and still completes a real reset on fresh page load.");
+
+// 4. Rate limiting (requirement 5): fire real N+1 requests at each of the 4
+// endpoints and assert the LAST one is a real 429 with a real Retry-After
+// header. Cleared first so none of this slice's own functional checks
+// above (which legitimately used a few requests on shared per-IP/per-email
+// buckets) eat into the exact budget these deliberate tests depend on.
+resetRateLimiterState();
+
+async function assertRateLimited(requests, label) {
+  let last;
+  for (const request of requests) {
+    last = await request();
+  }
+  assert.equal(last.status, 429, `${label} must return a real 429 once its real limit is exceeded`);
+  assert.ok(Number(last.headers.get("retry-after")) > 0, `${label}'s 429 must include a real Retry-After header`);
+  assert.equal((await last.json()).code, "RATE_LIMITED");
+}
+
+// forgot-password: max 6/hour per IP+email -- fire 7 for one fresh email.
+await assertRateLimited(
+  Array.from({ length: 7 }, () => () => forgotPasswordRequest("nma23-rate-limit-forgot@example.com")),
+  "POST /api/auth/forgot-password"
+);
+
+// login: max 10/hour per IP+email -- fire 11 for one fresh email.
+await assertRateLimited(
+  Array.from(
+    { length: 11 },
+    () => () =>
+      fetch(`${serverOrigin}/api/auth/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "nma23-rate-limit-login@example.com", password: "wrongpassword" })
+      })
+  ),
+  "POST /api/auth/login"
+);
+
+// register: max 6/hour per IP+email -- fire 7 for one fresh email (the
+// first succeeds, the rest are business-logic 409s, but the RATE limiter
+// itself counts every request regardless of the handler's own outcome).
+await assertRateLimited(
+  Array.from(
+    { length: 7 },
+    () => () =>
+      fetch(`${serverOrigin}/api/auth/register`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Rate Limit Register", email: "nma23-rate-limit-register@example.com", password: "somepassword1" })
+      })
+  ),
+  "POST /api/auth/register"
+);
+
+// reset-password: max 8/hour per IP (no email field on this route) -- fire 9.
+await assertRateLimited(
+  Array.from({ length: 9 }, () => () => resetPasswordRequest("some-garbage-token", "irrelevantpassword1")),
+  "POST /api/auth/reset-password"
+);
+
+resetRateLimiterState(); // leaves every OTHER auth flow in this suite (registration/login for various real test accounts) with a full, real budget again, not artificially starved by this test's own deliberate exhaustion.
+
+console.log("PASS: NM-A23 rate limiting -- all 4 auth endpoints (forgot-password, reset-password, login, register) really return a 429 with a real Retry-After header once their real per-key limit is exceeded.");
+
+// --- NM-A24: Rate Limiting / Anti-Spam (Listings, Messages, Reports) ---
+// Cleared first, for the same reason the NM-A23 block above clears before
+// its own deliberate-exhaustion tests: nothing earlier in this shared-server
+// suite should eat into the precise budgets these tests depend on.
+resetRateLimiterState();
+
+// Fires every request SEQUENTIALLY (not in parallel -- a real client
+// wouldn't fire hundreds of concurrent requests either, and sequential
+// firing is what keeps this deterministic against the sliding window
+// rather than racing it) and returns every response, so the caller can
+// assert on ALL of them -- not just the last one. This is the key
+// difference from NM-A23's own assertRateLimited() helper above: the task
+// for THIS slice explicitly requires proving requests UNDER the limit all
+// succeed normally, not just that the limiter blocks once exceeded.
+async function fireSequentially(requestFactories) {
+  const responses = [];
+  for (const factory of requestFactories) {
+    responses.push(await factory());
+  }
+  return responses;
+}
+
+const nma24UserA = await registerRealUserDirectly("NMA24 Rate Limit A", "nma24-ratelimit-a@example.com", DEFAULT_TEST_PASSWORD);
+const nma24UserB = await registerRealUserDirectly("NMA24 Rate Limit B", "nma24-ratelimit-b@example.com", DEFAULT_TEST_PASSWORD);
+
+// 1. Listings: a real per-account limit of 20/day.
+const nma24ListingResponses = await fireSequentially(
+  Array.from(
+    { length: 21 },
+    (_, i) => () =>
+      fetch(`${serverOrigin}/api/listings`, {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: nma24UserA.cookie },
+        body: JSON.stringify({ title: `NMA24 Listing ${i}`, category: "Electronics", price: "100", country: "Sweden" })
+      })
+  )
+);
+for (let i = 0; i < 20; i++) {
+  assert.equal(nma24ListingResponses[i].status, 200, `listing create #${i + 1} (under the real 20/day limit) must succeed normally -- legitimate use must never be over-triggered`);
+}
+assert.equal(nma24ListingResponses[20].status, 429, "the 21st listing create by the SAME account in the SAME day must be rejected with a real 429");
+assert.ok(Number(nma24ListingResponses[20].headers.get("retry-after")) > 0, "the 429 must carry a real Retry-After header");
+assert.equal((await nma24ListingResponses[20].json()).code, "RATE_LIMITED");
+
+// The real point of keying on the account rather than the IP: every request
+// in this ENTIRE suite comes from the same loopback IP, so user B publishing
+// successfully right after user A's budget is fully exhausted is the real
+// proof this is a per-account limit, not a per-IP one that would have
+// wrongly locked out every other account sharing that IP too.
+const nma24UserBListingResponse = await fetch(`${serverOrigin}/api/listings`, {
+  method: "POST",
+  headers: { "content-type": "application/json", cookie: nma24UserB.cookie },
+  body: JSON.stringify({ title: "NMA24 User B's own listing", category: "Electronics", price: "50", country: "Sweden" })
+});
+assert.equal(nma24UserBListingResponse.status, 200, "a DIFFERENT account sharing the SAME IP must have its own untouched budget");
+
+resetRateLimiterState();
+
+// 2. Messages: a real per-account limit of 40/hour -- deliberately the
+// middle of the task's own suggested 30-60/hour range, chosen so a genuine
+// fast-moving buyer/seller negotiation (many short back-and-forth messages
+// inside a few minutes) is never affected, while a scripted harassment
+// flood still gets stopped well before the moderation queue or the
+// recipient's inbox would notice hundreds of messages in the same hour.
+const nma24Conversation = await (
+  await fetch(`${serverOrigin}/api/conversations/start-or-get`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: nma24UserA.cookie },
+    body: JSON.stringify({ listingId: "nma24-rate-limit-listing", participantIds: [nma24UserA.user.id, nma24UserB.user.id] })
+  })
+).json();
+assert.ok(nma24Conversation.id, "must get a real conversation id to message into");
+
+const nma24MessageResponses = await fireSequentially(
+  Array.from(
+    { length: 41 },
+    (_, i) => () =>
+      fetch(`${serverOrigin}/api/conversations/${nma24Conversation.id}/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: nma24UserA.cookie },
+        body: JSON.stringify({ text: `NMA24 message ${i}` })
+      })
+  )
+);
+for (let i = 0; i < 40; i++) {
+  assert.equal(nma24MessageResponses[i].status, 200, `message #${i + 1} (under the real 40/hour limit) must succeed normally -- a real fast negotiation must never be throttled`);
+}
+assert.equal(nma24MessageResponses[40].status, 429, "the 41st message in the same hour must be rejected with a real 429");
+assert.ok(Number(nma24MessageResponses[40].headers.get("retry-after")) > 0);
+assert.equal((await nma24MessageResponses[40].json()).code, "RATE_LIMITED");
+
+resetRateLimiterState();
+
+// --- Deployment-readiness audit: conversation authorization + the null-
+// participant crash, all verified against the real running server. ---
+{
+  const strangerReg = await fetch(`${serverOrigin}/api/auth/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: "Deploy Audit Stranger", email: "deploy-audit-stranger@example.com", password: DEFAULT_TEST_PASSWORD })
+  });
+  const strangerCookie = (strangerReg.headers.get("set-cookie") || "").split(";")[0];
+  const strangerUser = await strangerReg.json();
+
+  // A guest (no cookie at all) must never be able to read a conversation's
+  // messages -- this was previously wide open to anyone.
+  const guestReadResponse = await fetch(`${serverOrigin}/api/conversations/${nma24Conversation.id}/messages`);
+  assert.equal(guestReadResponse.status, 401, "a signed-out guest must never be able to read a conversation's messages");
+
+  // A real, signed-in, but UNRELATED account must not be able to read
+  // someone else's conversation just by knowing/guessing its id.
+  const strangerReadResponse = await fetch(`${serverOrigin}/api/conversations/${nma24Conversation.id}/messages`, {
+    headers: { cookie: strangerCookie }
+  });
+  assert.equal(strangerReadResponse.status, 403, "a signed-in user who isn't a participant must not be able to read the conversation");
+  assert.equal((await strangerReadResponse.json()).code, "NOT_A_PARTICIPANT");
+
+  // ...nor post into it.
+  const strangerPostResponse = await fetch(`${serverOrigin}/api/conversations/${nma24Conversation.id}/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: strangerCookie },
+    body: JSON.stringify({ text: "I should not be able to send this." })
+  });
+  assert.equal(strangerPostResponse.status, 403, "a signed-in user who isn't a participant must not be able to post into the conversation");
+  assert.equal((await strangerPostResponse.json()).code, "NOT_A_PARTICIPANT");
+
+  // The real participant must still be able to read their own conversation --
+  // proving the fix is a real authorization check, not an over-broad lockout.
+  const ownerReadResponse = await fetch(`${serverOrigin}/api/conversations/${nma24Conversation.id}/messages`, {
+    headers: { cookie: nma24UserA.cookie }
+  });
+  assert.equal(ownerReadResponse.status, 200, "a real participant must still be able to read their own conversation");
+  assert.ok(Array.isArray(await ownerReadResponse.json()));
+
+  // GET /conversations and /conversations/all must both require a real
+  // session now (previously: open to anyone, including signed-out guests).
+  assert.equal((await fetch(`${serverOrigin}/api/conversations?userId=${strangerUser.id}`)).status, 401, "GET /conversations must require a real session");
+  assert.equal((await fetch(`${serverOrigin}/api/conversations/all`)).status, 401, "GET /conversations/all must require a real session");
+  // GET /conversations must derive "whose conversations" from the real
+  // session, not a spoofable ?userId= query param -- requesting as the
+  // stranger (who has zero conversations) but naming nma24UserA's id in the
+  // query must still return the STRANGER's own (empty) list, not A's.
+  const spoofedListResponse = await fetch(`${serverOrigin}/api/conversations?userId=${nma24UserA.user.id}`, {
+    headers: { cookie: strangerCookie }
+  });
+  assert.equal(spoofedListResponse.status, 200);
+  assert.equal((await spoofedListResponse.json()).length, 0, "a spoofed ?userId= must be ignored -- the real session, not the query string, decides whose conversations these are");
+
+  // The confirmed, reproducible bug: a null participant (matching a seed
+  // listing's real null sellerId) must be a clean 400, never the raw
+  // SqliteError/500/stack-trace-leak this used to produce.
+  const nullParticipantResponse = await fetch(`${serverOrigin}/api/conversations/start-or-get`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: nma24UserA.cookie },
+    body: JSON.stringify({ listingId: "oak-table", participantIds: [nma24UserA.user.id, null] })
+  });
+  assert.equal(nullParticipantResponse.status, 400, "a null participant must be a clean 400, not an unhandled 500");
+  assert.equal((await nullParticipantResponse.json()).code, "INVALID_PARTICIPANT");
+  assert.match(nullParticipantResponse.headers.get("content-type") || "", /application\/json/, "the error response must be real JSON, never Express's default HTML stack-trace page");
+}
+
+// 3. Reports: a real per-account limit of 15/day, so NM-A21's own
+// moderation queue can't be flooded with junk faster than an admin could
+// ever triage it.
+const nma24ReportResponses = await fireSequentially(
+  Array.from(
+    { length: 16 },
+    () => () =>
+      fetch(`${serverOrigin}/api/reports`, {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: nma24UserA.cookie },
+        body: JSON.stringify({ reportedUserId: nma24UserB.user.id, reason: "other" })
+      })
+  )
+);
+for (let i = 0; i < 15; i++) {
+  assert.equal(nma24ReportResponses[i].status, 200, `report #${i + 1} (under the real 15/day limit) must succeed normally`);
+}
+assert.equal(nma24ReportResponses[15].status, 429, "the 16th report in the same day must be rejected with a real 429");
+assert.ok(Number(nma24ReportResponses[15].headers.get("retry-after")) > 0);
+assert.equal((await nma24ReportResponses[15].json()).code, "RATE_LIMITED");
+
+resetRateLimiterState(); // leaves every other real functional flow later in this suite with a full, clean budget again.
+
+console.log("PASS: NM-A24 rate limiting -- listing creation (20/day), messaging (40/hour), and reporting (15/day) all really throttle with a real 429 + Retry-After once their real per-ACCOUNT limit is exceeded, every request strictly under the limit succeeds normally, and a different account sharing the same IP is unaffected.");
+
+// The real, translated frontend messages (requirement: a clear, translated
+// message on a 429, not a generic failure) -- driven through the SAME real
+// UI code paths (sendComposedMessage, submitReportModal, commitPublish via
+// publishListing) every other behavioral test in this file already uses,
+// not a bypass straight to DataService.
+{
+  resetRateLimiterState();
+
+  // publishTestListing() registers its OWN seller account and signs it out
+  // again at the end (see its own definition above) -- it must run BEFORE
+  // the frontend tester below logs in, or it would clobber/kill the shared
+  // testCookieJar session this block depends on right out from under it
+  // (a real bug this exact ordering caught during development).
+  const frontendReportTargetListing = await publishTestListing("NMA24 Report Target Seller", "nma24-report-target@example.com", "NMA24 Report Target Listing");
+
+  await registerTestUser("NMA24 Frontend Tester", "nma24-frontend@example.com", DEFAULT_TEST_PASSWORD);
+
+  // Exhaust the real per-account report limit (15/day) via 15 direct calls
+  // reusing this same signed-in account's real session cookie (testCookieJar,
+  // the one the vm-sandboxed `context` itself uses), then trigger the 16th
+  // through the REAL UI form.
+  for (let i = 0; i < 15; i++) {
+    const response = await fetch(`${serverOrigin}/api/reports`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: testCookieJar },
+      body: JSON.stringify({ listingId: frontendReportTargetListing.id, reason: "other" })
+    });
+    assert.equal(response.status, 200, `pre-exhaustion report #${i + 1} must succeed`);
+  }
+  context.openListing(frontendReportTargetListing.id);
+  context.handleReportListingClick(frontendReportTargetListing.id);
+  elements["report-reason-select"].value = "other";
+  elements["report-details-input"].value = "";
+  await context.submitReportModal();
+  assert.equal(elements["report-error"].hidden, false, "the real UI must show a real error once the report limit is hit through it, not close the modal as if it succeeded");
+  assert.match(
+    elements["report-error"].textContent,
+    /too quickly.*try again in \d+ minutes?\./i,
+    "the real UI error must be the actual translated rate-limit message with a real minute count, not a generic failure"
+  );
+  console.log(`PASS: NM-A24 frontend report rate-limit message -- "${elements["report-error"].textContent}"`);
+
+  resetRateLimiterState();
+  await context.signOutUser();
+}
+
+// --- Deployment-readiness audit: stored XSS, verified end-to-end through
+// the real publish -> render pipeline, not just a source-text check. A
+// listing titled with a real HTML/script payload must never reach the DOM
+// as a live tag -- for ANY signed-out guest browsing, the exact
+// unauthenticated attack the audit confirmed. ---
+{
+  const xssPayload = `<img src=x onerror=alert(1)>`;
+  const xssListing = await publishTestListing("XSS Test Seller", "xss-test-seller@example.com", xssPayload);
+  // The server must store the real, raw value -- escaping is a RENDER-time
+  // concern, not a storage-time one (storing a mangled title would itself be
+  // a real data-integrity bug, and would make this test meaningless).
+  assert.equal(xssListing.title, xssPayload, "the raw title must be stored as-is; escaping happens only when rendering to HTML");
+
+  await context.refreshListingsCache();
+  context.renderListings();
+  const gridHtml = elements["listing-grid"].innerHTML;
+  assert.doesNotMatch(gridHtml, /<img src=x onerror=alert\(1\)>/, "a malicious listing title must never reach the Browse grid as a live tag");
+  assert.match(gridHtml, /&lt;img src=x onerror=alert\(1\)&gt;/, "it must render as real, visible, escaped text instead");
+
+  context.openListing(xssListing.id);
+  const detailHtml = elements["listing-detail"].innerHTML;
+  assert.doesNotMatch(detailHtml, /<img src=x onerror=alert\(1\)>/, "a malicious listing title must never reach the listing detail page as a live tag");
+  assert.match(detailHtml, /&lt;img src=x onerror=alert\(1\)&gt;/, "it must render as real, visible, escaped text there too");
+
+  // Same proof for a chat message: a buyer messages the (malicious-title)
+  // listing's seller with a script-payload message, through the real
+  // compose-modal -> sendComposedMessage() path (not a direct API call).
+  await registerTestUser("XSS Test Buyer", "xss-test-buyer@example.com", DEFAULT_TEST_PASSWORD);
+  await context.refreshListingsCache();
+  context.openMessageComposer(xssListing.id);
+  const messagePayload = `<script>alert(document.cookie)</script>`;
+  elements["compose-message-input"].value = messagePayload;
+  await context.sendComposedMessage();
+  context.renderInbox();
+  const inboxHtml = elements["inbox-content"].innerHTML;
+  assert.doesNotMatch(inboxHtml, /<script>alert\(document\.cookie\)<\/script>/, "a malicious chat message must never reach the Inbox preview as a live tag");
+  assert.match(inboxHtml, /&lt;script&gt;alert\(document\.cookie\)&lt;\/script&gt;/, "it must render as real, visible, escaped text instead");
+  await context.signOutUser();
+
+  console.log("PASS: deployment-readiness stored-XSS fix -- a real HTML/script payload in a listing title (Browse grid + listing detail, reachable by any signed-out guest) and in a chat message (thread view) both render as real, visible, escaped text, never as a live tag, verified end-to-end through the actual publish/message -> render pipeline.");
+}
+
 // NM-A14: register a real account for the restart-persistence check below,
 // while the server is still up -- its own real session cookie, captured now
 // and reused (unmodified) against the REOPENED server after a real restart.
 restartPersistenceTestUser = await registerRealUserDirectly("Restart Persistence Tester", "restart-persistence@example.com", DEFAULT_TEST_PASSWORD);
+
+// BL-A06: a saved home location must survive a real server restart, the
+// same way the session/listings/photos above do -- set here, while the
+// server is still up, via the same real PATCH /auth/me route Settings uses,
+// then checked again after the restart in assertBackendPersistsAcrossRestart.
+const homeLocationPatchResponse = await fetch(`${serverOrigin}/api/auth/me`, {
+  method: "PATCH",
+  headers: { "content-type": "application/json", cookie: restartPersistenceTestUser.cookie },
+  body: JSON.stringify({ homeCountry: "Finland", homeRegion: "Uusimaa" })
+});
+const homeLocationPatchBody = await homeLocationPatchResponse.json();
+assert.equal(homeLocationPatchBody.homeCountry, "Finland", "PATCH /auth/me must persist and immediately return the new home country");
+assert.equal(homeLocationPatchBody.homeRegion, "Uusimaa");
+
+// --- NM-A25: Per-Listing URLs / Deep Links (Client-Side Routing) ---
+// Layered onto showView()/open*() (untouched) via parseRoute/applyRoute/
+// navigateTo*/handlePopState. Exercised two ways: (1) through the vm-
+// sandboxed `context` for the real click-driven navigation + popstate
+// wiring, using the fake `history`/`location`/popstate-listener setup
+// added to the shared vm context above; (2) fresh, isolated vm contexts
+// (like the NM-A23 stopgap test above) for a real "fresh page load lands
+// directly on this content" proof, since that's a bootstrap-time behavior.
+{
+  pushStateCalls.length = 0;
+  setFakeLocation("/");
+
+  // 1. Clicking a listing pushes a real URL and opens the real content.
+  context.navigateToListing("iphone-14");
+  assert.equal(pushStateCalls[pushStateCalls.length - 1], "/listing/iphone-14", "navigateToListing must push a real, shareable per-listing URL");
+  assert.equal(fakeLocation.pathname, "/listing/iphone-14", "the fake location (standing in for the real browser URL bar) must reflect the pushed route");
+  assert.ok(views.find((view) => view.id === "detail-view").classList.contains("active-view"), "navigateToListing must still open the real listing detail view, unchanged from showView()'s own mechanism");
+  assert.match(elements["listing-detail"].innerHTML, /iPhone 14/);
+
+  // 2. Clicking a seller profile pushes a real URL and opens the real
+  // content -- reviewSellerListing.sellerId (a real registered account
+  // from earlier in this suite, published via the real Sell form) is used
+  // rather than a made-up id, so the profile that opens is real too.
+  await context.navigateToProfile(reviewSellerListing.sellerId);
+  assert.equal(pushStateCalls[pushStateCalls.length - 1], `/profile/${reviewSellerListing.sellerId}`, "navigateToProfile must push a real, shareable per-profile URL");
+  assert.equal(fakeLocation.pathname, `/profile/${reviewSellerListing.sellerId}`);
+  assert.ok(views.find((view) => view.id === "profile-view").classList.contains("active-view"));
+  assert.match(elements["seller-profile"].innerHTML, /Review Seller/, "the real seller's name must actually render, not just the view switching");
+
+  // 3. Clicking a static page pushes a real URL and opens the real content
+  // -- both the delegated click path (navigateToStaticPage itself) and the
+  // cookie-banner's own direct call site (handleCookieSettingsClick), which
+  // NM-A25 also routed through the same wrapper instead of calling
+  // openStaticPage() directly.
+  context.navigateToStaticPage("safetyTips");
+  assert.equal(pushStateCalls[pushStateCalls.length - 1], "/page/safetyTips", "navigateToStaticPage must push a real, shareable per-page URL");
+  assert.equal(fakeLocation.pathname, "/page/safetyTips");
+  assert.ok(views.find((view) => view.id === "static-page-view").classList.contains("active-view"));
+  assert.match(elements["static-page-content"].innerHTML, /Safety Tips/);
+
+  context.handleCookieSettingsClick();
+  assert.equal(pushStateCalls[pushStateCalls.length - 1], "/page/cookiePolicy", "the cookie-banner's own static-page link must ALSO push a real URL now, not bypass the routing layer");
+
+  // 4. Every OTHER navigation (explicitly out of scope for a URL of its
+  // own) must still push NOTHING -- Browse/Inbox/Sell/etc. keep working
+  // exactly as before, with no URL change at all.
+  const pushCountBeforeOrdinaryNav = pushStateCalls.length;
+  context.showView("inbox-view");
+  context.showView("sell-view");
+  context.showView("browse-view");
+  assert.equal(pushStateCalls.length, pushCountBeforeOrdinaryNav, "ordinary view switches (Inbox, Sell, Browse, ...) must never push a URL -- only the 4 named routes do");
+
+  // 5. parseRoute() itself: exactly these 4 shapes match, nothing else does.
+  // (Compared field-by-field, not with assert.deepEqual -- the object
+  // parseRoute() returns is a plain object from the SANDBOXED realm's own
+  // Object.prototype, not this file's, which Node's deepStrictEqual treats
+  // as a real inequality even when every field matches.)
+  function assertRoute(route, type, param) {
+    assert.ok(route, `parseRoute must return a real route object for a ${type} URL`);
+    assert.equal(route.type, type);
+    assert.equal(route.param, param);
+  }
+  assertRoute(context.parseRoute("/listing/abc"), "listing", "abc");
+  assertRoute(context.parseRoute("/profile/xyz"), "profile", "xyz");
+  assertRoute(context.parseRoute("/page/faq"), "page", "faq");
+  assertRoute(context.parseRoute("/reset-password/tok123"), "reset-password", "tok123");
+  assert.equal(context.parseRoute("/"), null, "the bare root must not be treated as one of the 4 routes");
+  assert.equal(context.parseRoute("/inbox-view"), null, "a view name must never accidentally be parsed as a route -- only these 4 exact shapes are real routes");
+  assert.equal(context.parseRoute(""), null);
+
+  console.log("PASS: NM-A25 navigation wiring -- clicking a listing/profile/static-page (and the cookie-banner's own static-page link) pushes a real, correctly-shaped URL and still opens the exact same real content showView()/open*() always did; every other view switch pushes no URL at all.");
+
+  // 6. Real back/forward (popstate). Simulated by moving the fake location
+  // to wherever the browser would have moved it and firing the exact same
+  // `popstate` listener bootstrap() registered -- handlePopState() itself
+  // doesn't know or care whether that move was a "back" or a "forward" tap,
+  // it only ever reacts to "the URL is now X", which is exactly what a real
+  // browser guarantees on either button. The real, directional back/forward
+  // BUTTON behavior is verified for real in Playwright (see EVIDENCE.md);
+  // this proves the popstate handler's own dispatch logic is correct.
+  context.navigateToListing("volvo-v60");
+  assert.ok(views.find((view) => view.id === "detail-view").classList.contains("active-view"));
+
+  // "Back" to the bare root: nothing left to route to -- must land on
+  // Browse, not stay stuck on the listing or crash.
+  setFakeLocation("/");
+  firePopState();
+  assert.ok(views.find((view) => view.id === "browse-view").classList.contains("active-view"), "a popstate back to \"/\" (no matching route) must fall back to Browse");
+
+  // "Forward" back to the listing: must reopen it directly.
+  setFakeLocation("/listing/volvo-v60");
+  firePopState();
+  assert.ok(views.find((view) => view.id === "detail-view").classList.contains("active-view"), "a popstate forward to a real route must reopen that exact content");
+  assert.match(elements["listing-detail"].innerHTML, /Volvo V60/);
+
+  // A popstate landing back on "/" while the reset-password modal happens
+  // to be open must close it (it's a modal, not a `view`, so showView()
+  // alone would never touch it).
+  setFakeLocation(`/reset-password/${bootstrapStopgapToken}`);
+  firePopState();
+  assert.equal(elements["reset-password-modal"].hidden, false, "a popstate INTO /reset-password/:token must open the modal");
+  setFakeLocation("/");
+  firePopState();
+  assert.equal(elements["reset-password-modal"].hidden, true, "a popstate back to \"/\" must close the reset-password modal, not leave it open over Browse");
+  context.closeResetPasswordModal(); // defensive reset regardless of the assertion above
+
+  console.log("PASS: NM-A25 back/forward (popstate) -- landing back on a real route reopens that exact content, landing on \"/\" falls back to Browse and closes an open reset-password modal, matching real Playwright-verified back/forward behavior.");
+
+  setFakeLocation("/");
+  pushStateCalls.length = 0;
+}
+
+// A fresh page load (a NEW vm context, exactly like the NM-A23 stopgap test
+// above) of each of the 3 other real routes must land directly on that
+// exact content too -- not just a client-side pushState navigation. Shares
+// the same fake `document` (elements/views) as `context` itself, so
+// asserting against `elements`/`views` after each fresh bootstrap proves
+// what that fresh load actually rendered.
+async function bootstrapFreshAt(pathname) {
+  const freshContext = vm.createContext({
+    document,
+    fetch: makeTestFetch(),
+    navigator: fakeNavigator,
+    localStorage: fakeLocalStorage,
+    window: {
+      location: { href: `http://localhost:4173${pathname}`, origin: "http://localhost:4173", pathname, search: "" },
+      addEventListener() {},
+      scrollTo() {}
+    }
+  });
+  await vm.runInContext(combinedJs, freshContext);
+  return freshContext;
+}
+
+await bootstrapFreshAt("/listing/iphone-14");
+assert.ok(views.find((view) => view.id === "detail-view").classList.contains("active-view"), "a fresh page load of /listing/:id must land directly on that listing, not reset to Browse");
+assert.match(elements["listing-detail"].innerHTML, /iPhone 14/);
+
+await bootstrapFreshAt(`/profile/${reviewSellerListing.sellerId}`);
+assert.ok(views.find((view) => view.id === "profile-view").classList.contains("active-view"), "a fresh page load of /profile/:id must land directly on that profile");
+assert.match(elements["seller-profile"].innerHTML, /Review Seller/, "the fresh load must render the real seller's real profile, not just switch views");
+
+await bootstrapFreshAt("/page/safetyTips");
+assert.ok(views.find((view) => view.id === "static-page-view").classList.contains("active-view"), "a fresh page load of /page/:slug must land directly on that static page");
+assert.match(elements["static-page-content"].innerHTML, /Safety Tips/);
+
+// A fresh load of an UNKNOWN id/slug must not crash -- openSellerProfile/
+// openStaticPage already have their own real "not found" UI (unchanged by
+// this slice); confirming that path still works when reached via a route
+// rather than a click.
+await bootstrapFreshAt("/profile/does-not-exist-at-all");
+assert.ok(views.find((view) => view.id === "profile-view").classList.contains("active-view"));
+assert.match(elements["seller-profile"].innerHTML, /profile-empty/, "an unknown profile id reached via a fresh route load must show the real not-found state, not crash");
+
+await bootstrapFreshAt("/page/not-a-real-slug");
+assert.ok(views.find((view) => view.id === "static-page-view").classList.contains("active-view"));
+assert.match(elements["static-page-content"].innerHTML, /profile-empty/, "an unknown static-page slug reached via a fresh route load must show the real not-found state, not crash");
+
+// A fresh load of "/" (no route at all) must not touch the view at all --
+// parseRoute("/") returns null, so applyRoute() is never even called, and
+// bootstrap() falls through exactly as it always did pre-NM-A25 (real
+// index.html itself already marks browse-view active by default markup;
+// this shared fake `document` just isn't a faithful stand-in for THAT part
+// of a real fresh load, since earlier fresh contexts in this same suite
+// already mutated its shared elements -- the real "/" case is unchanged
+// and already covered by every other test in this file that never once
+// passes a route-shaped pathname).
+await bootstrapFreshAt("/");
+assert.equal(context.parseRoute("/"), null, "the bare root must never be treated as a route needing special bootstrap handling");
+
+console.log("PASS: NM-A25 fresh page loads -- a real, direct (non-client-side-navigated) load of /listing/:id, /profile/:id, and /page/:slug each lands straight on that exact real content, an unknown id/slug degrades gracefully to the existing not-found UI instead of crashing, and \"/\" is unaffected.");
+
+// The real backend routes themselves (raw HTTP, no JS/vm involved at all --
+// the actual acceptance bar: a raw curl-style fetch against /listing/:id
+// must show THIS listing's real title/description in its og:*/twitter:*
+// meta tags, not the same boilerplate for every id).
+{
+  // reviewSellerListing (published earlier in this suite via the real
+  // Sell form + uploadFakePhoto()) has a REAL uploaded photo under
+  // /uploads -- unlike the seed listings (iphone-14/volvo-v60), whose
+  // seed photos are CSS gradients, not real files. Using it here is what
+  // makes the og:image assertion below a real, meaningful proof rather
+  // than something that would pass even if og:image were silently never
+  // set (see this slice's own escapeRegex helper below).
+  const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const ogListing = await (await fetch(`${serverOrigin}/api/listings`)).json().then((all) => all.find((item) => item.id === reviewSellerListing.id));
+  const listingHtml = await (await fetch(`${serverOrigin}/listing/${reviewSellerListing.id}`)).text();
+  assert.match(listingHtml, /class="app-shell"/, "a raw HTTP GET of /listing/:id must return the real app shell HTML");
+  assert.match(listingHtml, /<script src="\/app\.js/);
+  assert.match(listingHtml, new RegExp(`<title>${escapeRegex(ogListing.title)} — FindNord</title>`), "the real <title> must reflect this exact listing, not a generic one");
+  assert.match(
+    listingHtml,
+    new RegExp(`<meta property="og:title" content="${escapeRegex(ogListing.title)} — FindNord" />`),
+    "og:title must be this exact listing's real title"
+  );
+  assert.match(
+    listingHtml,
+    new RegExp(`<meta property="og:url" content="${escapeRegex(serverOrigin)}/listing/${reviewSellerListing.id}" />`),
+    "og:url must be the real canonical URL for THIS listing"
+  );
+  assert.match(listingHtml, /<meta property="og:image" content="[^"]*\/uploads\//, "this listing has a real uploaded photo -- og:image must point at a real /uploads file, not be missing or fabricated");
+
+  // A DIFFERENT real listing (a seed listing, with no real uploaded photo)
+  // must get DIFFERENT OG data, and no fabricated og:image -- the actual
+  // proof this is per-listing, not one shared template.
+  const volvoListing = await (await fetch(`${serverOrigin}/api/listings`)).json().then((all) => all.find((item) => item.id === "volvo-v60"));
+  const volvoHtml = await (await fetch(`${serverOrigin}/listing/volvo-v60`)).text();
+  assert.match(volvoHtml, new RegExp(`<meta property="og:title" content="${escapeRegex(volvoListing.title)} — FindNord" />`));
+  assert.notEqual(listingHtml.match(/<title>[^<]*<\/title>/)[0], volvoHtml.match(/<title>[^<]*<\/title>/)[0], "two different listings must get two genuinely different <title>s, proving real per-listing data, not shared boilerplate");
+  assert.doesNotMatch(volvoHtml, /<meta property="og:image"/, "a listing whose photos are seed gradients (not a real uploaded file) must omit og:image rather than fabricate one");
+
+  // A nonexistent listing id: a real, graceful 404 (per this slice's own
+  // required backend smoke test), not a crash.
+  const missingRes = await fetch(`${serverOrigin}/listing/this-listing-does-not-exist`);
+  assert.equal(missingRes.status, 404, "a nonexistent listing id must be a real 404 at the raw HTTP layer");
+  assert.match(await missingRes.text(), /class="app-shell"/, "even the 404 must still be real, renderable HTML");
+
+  // /profile/:id and /page/:slug: real HTML for a real registered seller,
+  // and a real 404 for a nonexistent profile id.
+  assert.ok(ogListing.sellerId, "reviewSellerListing must have a real sellerId (a real registered account), not a seed listing with none");
+  const profileHtml = await (await fetch(`${serverOrigin}/profile/${ogListing.sellerId}`)).text();
+  assert.match(profileHtml, /class="app-shell"/);
+  const missingProfileRes = await fetch(`${serverOrigin}/profile/no-such-user-at-all`);
+  assert.equal(missingProfileRes.status, 404, "a nonexistent profile id must be a real 404 at the raw HTTP layer");
+  const pageHtml = await (await fetch(`${serverOrigin}/page/safetyTips`)).text();
+  assert.match(pageHtml, /class="app-shell"/);
+
+  console.log("PASS: NM-A25 backend routing -- a raw HTTP GET of /listing/:id serves real, genuinely per-listing og:*/twitter:* meta tags (proven distinct across two different real listings), a nonexistent id is a real 404 (not a crash), and /profile/:id + /page/:slug both serve real HTML.");
+}
 }
 
 const serverScript = fs.readFileSync(path.join(root, "scripts", "server.js"), "utf8");
 assert.match(serverScript, /app\.use\(express\.static\(root\)\)/, "the real Express server must serve the SPA's static files");
-assert.match(serverScript, /app\.post\("\/api\/generate-image"/, "server must expose the generate-image endpoint");
+assert.match(serverScript, /app\.post\(\s*"\/api\/generate-image"/, "server must expose the generate-image endpoint");
 assert.match(serverScript, /process\.env\.OPENAI_API_KEY/, "the API key must come from an environment variable, never be hardcoded");
 assert.doesNotMatch(serverScript, /sk-[A-Za-z0-9]{10,}/, "no real-looking API key must ever be committed to this file");
 assert.match(serverScript, /api\.openai\.com\/v1\/images\/generations/);
@@ -2498,6 +5194,12 @@ async function assertBackendPersistsAcrossRestart(dbPath, uploadsDir) {
     assert.ok(meBody, "a session created before a restart must still resolve to a real account after it");
     assert.equal(meBody.id, restartPersistenceTestUser.user.id, "the restart must recognize the exact same account, not a different or blank one");
     assert.equal(meBody.email, "restart-persistence@example.com");
+
+    // BL-A06: the home location saved (via PATCH /auth/me) before the
+    // restart must still be there after it -- a real DB column, not
+    // in-memory-only state.
+    assert.equal(meBody.homeCountry, "Finland", "a saved home country must survive a real server restart");
+    assert.equal(meBody.homeRegion, "Uusimaa", "a saved home region must survive a real server restart");
   } finally {
     reopened.server.close();
   }
@@ -2561,13 +5263,18 @@ const TEST_DB_PATH = path.join(os.tmpdir(), `findnord-test-${process.pid}-${Date
 const TEST_UPLOADS_DIR = path.join(os.tmpdir(), `findnord-test-uploads-${process.pid}-${Date.now()}`);
 let serverOrigin;
 let restartPersistenceTestUser;
+// NM-A21: the one real, designated admin account for the whole suite --
+// ADMIN_EMAIL is set at the very top of this file, before scripts/auth.js
+// is ever required, so registering this exact email for real makes the
+// server's own syncAdminFlag mark it is_admin=1 for real, not simulated.
+let adminCookie;
 
 async function main() {
   const testServer = await startTestServer(TEST_DB_PATH, TEST_UPLOADS_DIR);
   serverOrigin = `http://127.0.0.1:${testServer.port}`;
 
   try {
-    await runBehavioralTests();
+    await runBehavioralTests(testServer.db);
   } finally {
     // A leftover open server socket keeps the event loop alive forever, so a
     // failing assertion would hang the process indefinitely instead of
@@ -2578,7 +5285,7 @@ async function main() {
   await assertBackendPersistsAcrossRestart(TEST_DB_PATH, TEST_UPLOADS_DIR);
 
   console.log(
-    "E2E FindNord workflow passed: browse, search, empty state, detail contact, seller trust, safety, tracking, expanded categories, listing creation, language switch, country theming, real email + password authentication (NM-A14: sign-up, login, wrong-password rejection, returning-user recognition, server-side-enforced ownership, and a real session surviving a genuine restart) gating save/message/report/publish, the filter & sort sheet, gated AI photo generation, the real Express + SQLite backend (NM-A11) with real local file storage for every photo (NM-A12) surviving a genuine restart, basic listing management for sellers (NM-A13: edit, Reserved/Sold status, and server-side-enforced delete, all surviving a genuine restart), public seller profiles (NM-A16: clickable seller detail link, guest-readable profile, localized verification placeholder, and profile listing navigation), the dedicated Login page, the messaging prototype, media improvements (6-image cap, real multi-photo storage, gallery thumbnails), and the signed-in account bar (profile avatar, real My Listings, real Boost with ownership checks, and real Analytics) verified."
+    "E2E FindNord workflow passed: browse, search, empty state, detail contact, seller trust, safety, tracking, expanded categories, listing creation, language switch, country theming, real email + password authentication (NM-A14: sign-up, login, wrong-password rejection, returning-user recognition, server-side-enforced ownership, and a real session surviving a genuine restart) gating save/message/report/publish, the filter & sort sheet, gated AI photo generation, the real Express + SQLite backend (NM-A11) with real local file storage for every photo (NM-A12) surviving a genuine restart, basic listing management for sellers (NM-A13: edit, Reserved/Sold status, and server-side-enforced delete, all surviving a genuine restart), public seller profiles (NM-A16: clickable seller detail link, guest-readable profile, localized verification placeholder, and profile listing navigation), reviews and ratings (NM-A17: gated submission with guest resume, self-review and duplicate rejection, a real abuse filter that cleans and warns on a first offense and permanently bans on a second, all reflected live in the compact listing-detail rating and the public profile's average/count/recent-reviews list), Boost/Premium (NM-A18: free-first package-based boosts with a real expiry, a live BOOST_PAYMENTS_ENABLED flag that blocks free activation and routes to a real Stripe Checkout integration point once on, default-feed ranking that respects an active boost without overriding an explicit price/distance sort, a positional-quota rotation that caps top-feed boost slots and reshuffles fairly across all eligible boosted listings rather than letting them permanently dominate, and a random fairness segment spotlighting non-boosted listings on the Browse view), rectangular (not oversized-pill) scope buttons sharing a real dynamic border-radius token with the rest of the control chrome, a mobile-responsiveness pass (including a fixed Filter-sheet min/max price row that was squeezing unreadable at 320px), currency/location/locale correctness (NM-A19: a real per-listing country fixed permanently at publish and immune to later edits or browsing-context drift, real Intl-based currency formatting native to each of the 5 Nordic currencies, a now-genuine Country scope filter, real live locale-aware relative time replacing a frozen English string, and one shared CLDR-correct pluralization mechanism app-wide), trust & safety (NM-A20: a real Report modal with a defined reason set and optional details, available from both a listing and a profile, landing in a real, queryable internal review structure with a status field; a real, reversible Block action from a profile or a conversation that immediately hides a blocked user's listings from Browse and their conversations from the Inbox, with server-side enforcement stopping messages in both directions and a clear error surfaced rather than a crash; an improved, translated Safety Tips page and safety reminder linking to it), a real Settings page under Profile (a real, editable Mobile number and a read-only account email), and an internal Minimal Admin Moderation Queue (NM-A21: a real per-user is_admin flag synced from a designated ADMIN_EMAIL at sign-in, every admin route independently requireAdmin'd server-side so a guest or ordinary user is refused regardless of what the client does, a real queue showing reported listings/users with reason/reporter/target/timestamp/status, Mark Reviewed/Dismiss on a report, and a real, everyone-visible Hide/Unhide on a reported listing plus an optional user flag toggle), a final honest re-audit pass (NM-A22: a Message-seller CTA that no longer appears on your own listing, and an Inbox row that no longer shows a seller their own name as if they were messaging themselves, now that sellers genuinely see buyer conversations in their own Inbox), a real password-reset / forgot-password flow (NM-A23: an always-generic /forgot-password response that never leaks account existence, a real single-use expiring reset token, full session invalidation everywhere on a successful reset, an honest distinct rejection for a Google-only account revealed only once a real valid token is presented, a reusable in-memory rate limiter enforcing a real 429 with Retry-After on all 4 auth endpoints), rate limiting extended to listings/messages/reports (NM-A24: real per-account throttling on all 3, requests under the limit unaffected, a different account on the same IP unaffected, and a real translated frontend message on each), real client-side routing (NM-A25: History-API-backed shareable /listing/:id, /profile/:id, /page/:slug, and /reset-password/:token URLs replacing NM-A23's query-string stopgap, a reload-safe server route + real per-listing escaped Open Graph tags for each, real Share links, and working browser back/forward), and complete real translation coverage for Norwegian, Danish, Finnish, and Icelandic (NM-A26: all 294 UI-chrome keys, a real coverage-gate test across all 4 languages, and STATIC_PAGES correctly left untouched/English-only), the dedicated Login page, the messaging prototype, media improvements (6-image cap, real multi-photo storage, gallery thumbnails), and the signed-in account bar (profile avatar, real My Listings, and real Analytics) verified."
   );
 }
 

@@ -16,15 +16,29 @@ function makeId(prefix) {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
 }
 
+// Deployment-readiness audit finding: this used to run unconditionally,
+// meaning a genuinely empty PRODUCTION database (first real boot) would get
+// silently filled with fake demo listings from db/seed-data.js. Local dev
+// and the test suite never set NODE_ENV=production (confirmed -- neither
+// does anywhere else in this repo), so they're completely unaffected and
+// keep seeding by default, same as always. Only a real NODE_ENV=production
+// deploy skips it, unless SEED_DEMO_DATA=true explicitly opts back in (e.g.
+// a staging environment that wants demo data).
+function shouldSeedDemoData() {
+  if (process.env.NODE_ENV !== "production") return true;
+  return process.env.SEED_DEMO_DATA === "true";
+}
+
 function seedIfEmpty(db) {
+  if (!shouldSeedDemoData()) return;
   const { count } = db.prepare("SELECT COUNT(*) AS count FROM listings").get();
   if (count > 0) return;
 
   const insertListing = db.prepare(`
     INSERT INTO listings
-      (id, title, category, subtype, price, locality, region, distance, condition, posted, posted_at, freshness, ai_photo, image, description, seller, seller_id, seller_type, trust, sponsored, created_at)
+      (id, title, category, subtype, price, locality, region, country, distance, condition, posted, posted_at, freshness, ai_photo, image, description, seller, seller_id, seller_type, trust, sponsored, created_at)
     VALUES
-      (@id, @title, @category, @subtype, @price, @locality, @region, @distance, @condition, @posted, @postedAt, @freshness, @aiPhoto, @image, @description, @seller, @sellerId, @sellerType, @trust, @sponsored, @createdAt)
+      (@id, @title, @category, @subtype, @price, @locality, @region, @country, @distance, @condition, @posted, @postedAt, @freshness, @aiPhoto, @image, @description, @seller, @sellerId, @sellerType, @trust, @sponsored, @createdAt)
   `);
   const insertImage = db.prepare(`
     INSERT INTO listing_images (listing_id, position, css, ai_generated) VALUES (?, ?, ?, ?)
@@ -40,6 +54,7 @@ function seedIfEmpty(db) {
         price: listing.price,
         locality: listing.locality,
         region: listing.region || null,
+        country: listing.country || "Sweden",
         distance: listing.distance,
         condition: listing.condition,
         posted: listing.posted,
@@ -139,6 +154,21 @@ function migrateListingRegionColumn(db) {
   if (!hasRegion) db.exec("ALTER TABLE listings ADD COLUMN region TEXT");
 }
 
+// NM-A19: defensive, idempotent migration for any database created before a
+// listing carried its own real country (and therefore currency -- see
+// CURRENCY_BY_COUNTRY in scripts/api.js, which derives currency from this
+// column the same way NM-A18 derives `sponsored` from a real expiry, rather
+// than storing a second field that could drift out of sync). A database
+// already on this schema gets the column from schema.sql and this is a
+// no-op; an older one gets every existing row grandfathered as Sweden/SEK --
+// the same country the app already defaulted to everywhere before this
+// column existed, so no existing listing's displayed currency changes.
+function migrateListingCountryColumn(db) {
+  const columns = db.prepare("PRAGMA table_info(listings)").all();
+  const hasCountry = columns.some((column) => column.name === "country");
+  if (!hasCountry) db.exec("ALTER TABLE listings ADD COLUMN country TEXT NOT NULL DEFAULT 'Sweden'");
+}
+
 // NM-A15: defensive, idempotent migration for any database created before
 // Google Sign-In existed -- adds the google_id column and its unique index
 // the same way migrateUsersAuthColumn added password_hash + its own unique
@@ -156,6 +186,130 @@ function migrateUsersGoogleIdColumn(db) {
   }
 }
 
+function migrateReviewsTable(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS reviews (
+      id TEXT PRIMARY KEY,
+      listing_id TEXT,
+      reviewer_id TEXT NOT NULL,
+      reviewee_id TEXT NOT NULL,
+      rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+      text TEXT,
+      created_at INTEGER NOT NULL,
+      UNIQUE (listing_id, reviewer_id, reviewee_id),
+      FOREIGN KEY (listing_id) REFERENCES listings(id),
+      FOREIGN KEY (reviewer_id) REFERENCES users(id),
+      FOREIGN KEY (reviewee_id) REFERENCES users(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_reviews_reviewee_id ON reviews(reviewee_id);
+    CREATE INDEX IF NOT EXISTS idx_reviews_reviewer_id ON reviews(reviewer_id);
+  `);
+}
+
+// NM-A17: defensive, idempotent migration for any database created before
+// review-abuse moderation existed -- same additive pattern as every prior
+// column (status, password_hash, google_id, region). `review_strikes` counts
+// how many times a user's review text has tripped the blocked-word filter
+// (scripts/review-moderation.js); `review_banned` permanently blocks further
+// review submissions once that count reaches the threshold.
+function migrateUsersReviewModerationColumns(db) {
+  const columns = db.prepare("PRAGMA table_info(users)").all();
+  if (!columns.some((column) => column.name === "review_strikes")) {
+    db.exec("ALTER TABLE users ADD COLUMN review_strikes INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!columns.some((column) => column.name === "review_banned")) {
+    db.exec("ALTER TABLE users ADD COLUMN review_banned INTEGER NOT NULL DEFAULT 0");
+  }
+}
+
+// NM-A18: defensive, idempotent migration for any database created before
+// package-based, time-limited boosts existed -- adds the two new columns the
+// same additive way every prior column has been added. A pre-existing
+// sponsored=1 row (the old, permanent, binary boost from NM-A9) has no real
+// expiry to infer, so it's grandfathered with a generous 365-day boost from
+// the moment of THIS migration, rather than silently losing its boosted
+// status or being treated as permanently sponsored forever with no
+// expiry-driven code path to manage it.
+function migrateListingBoostColumns(db) {
+  const columns = db.prepare("PRAGMA table_info(listings)").all();
+  if (!columns.some((column) => column.name === "boost_expires_at")) {
+    db.exec("ALTER TABLE listings ADD COLUMN boost_expires_at INTEGER");
+  }
+  if (!columns.some((column) => column.name === "boost_package")) {
+    db.exec("ALTER TABLE listings ADD COLUMN boost_package TEXT");
+  }
+  const legacyBoostedGrandfatherMs = 365 * 24 * 60 * 60 * 1000;
+  db.prepare("UPDATE listings SET boost_expires_at = ?, boost_package = 'legacy' WHERE sponsored = 1 AND boost_expires_at IS NULL").run(
+    Date.now() + legacyBoostedGrandfatherMs
+  );
+}
+
+// NM-A20: defensive, idempotent migration for any database created before
+// reports carried a real reason/target-user/status -- same additive pattern
+// as every prior column. A pre-existing report row (listing-only, no reason)
+// is left as-is: `reason`/`details` simply read as empty and `status`
+// defaults to 'open', same as a report filed today with no reason typed.
+function migrateReportsColumns(db) {
+  const columns = db.prepare("PRAGMA table_info(reports)").all();
+  if (!columns.some((column) => column.name === "reported_user_id")) {
+    db.exec("ALTER TABLE reports ADD COLUMN reported_user_id TEXT");
+  }
+  if (!columns.some((column) => column.name === "reason")) {
+    db.exec("ALTER TABLE reports ADD COLUMN reason TEXT");
+  }
+  if (!columns.some((column) => column.name === "details")) {
+    db.exec("ALTER TABLE reports ADD COLUMN details TEXT");
+  }
+  if (!columns.some((column) => column.name === "status")) {
+    db.exec("ALTER TABLE reports ADD COLUMN status TEXT NOT NULL DEFAULT 'open'");
+  }
+}
+
+// NM-A21: defensive, idempotent migration for any database created before
+// per-user contact info / admin flags existed -- same additive pattern as
+// every prior column. `is_admin`/`flagged` both default to 0/false, so an
+// existing account is never silently promoted to admin or flagged by this
+// migration itself -- see scripts/auth.js's syncAdminFlag for the one real
+// place `is_admin` ever actually gets set to 1.
+function migrateUsersContactAndAdminColumns(db) {
+  const columns = db.prepare("PRAGMA table_info(users)").all();
+  if (!columns.some((column) => column.name === "phone")) {
+    db.exec("ALTER TABLE users ADD COLUMN phone TEXT");
+  }
+  if (!columns.some((column) => column.name === "is_admin")) {
+    db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!columns.some((column) => column.name === "flagged")) {
+    db.exec("ALTER TABLE users ADD COLUMN flagged INTEGER NOT NULL DEFAULT 0");
+  }
+}
+
+// NM-A21: defensive, idempotent migration for any database created before
+// admin-hide existed on a listing -- same additive pattern as every prior
+// column, deliberately separate from the seller-controlled `status` column
+// (see schema.sql's own comment on this column).
+function migrateListingsAdminHiddenColumn(db) {
+  const columns = db.prepare("PRAGMA table_info(listings)").all();
+  if (!columns.some((column) => column.name === "admin_hidden")) {
+    db.exec("ALTER TABLE listings ADD COLUMN admin_hidden INTEGER NOT NULL DEFAULT 0");
+  }
+}
+
+// BL-A06: defensive, idempotent migration for any database created before
+// a saved home location existed -- same additive pattern as every prior
+// column. Existing rows are left NULL (rowToAuthUser/app.js both already
+// treat a null/missing home location as the Sweden/Stockholm default, the
+// same default a brand-new account gets).
+function migrateUsersHomeLocationColumns(db) {
+  const columns = db.prepare("PRAGMA table_info(users)").all();
+  if (!columns.some((column) => column.name === "home_country")) {
+    db.exec("ALTER TABLE users ADD COLUMN home_country TEXT");
+  }
+  if (!columns.some((column) => column.name === "home_region")) {
+    db.exec("ALTER TABLE users ADD COLUMN home_region TEXT");
+  }
+}
+
 function openDatabase(dbPath, options = {}) {
   const resolvedPath = dbPath || process.env.DB_PATH || DEFAULT_DB_PATH;
   if (resolvedPath !== ":memory:") fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
@@ -168,8 +322,19 @@ function openDatabase(dbPath, options = {}) {
   migrateListingStatusColumn(db);
   migrateUsersAuthColumn(db);
   migrateListingRegionColumn(db);
+  migrateListingCountryColumn(db);
   migrateUsersGoogleIdColumn(db);
+  migrateReviewsTable(db);
+  migrateUsersReviewModerationColumns(db);
+  migrateReportsColumns(db);
+  migrateUsersContactAndAdminColumns(db);
+  migrateUsersHomeLocationColumns(db);
+  migrateListingsAdminHiddenColumn(db);
   seedIfEmpty(db);
+  // Runs AFTER seeding: fresh seed data itself includes sponsored=1 rows
+  // (see db/seed-data.js) with no boost_expires_at, same as any pre-NM-A18
+  // database would -- backfilling here, not before seeding, catches both.
+  migrateListingBoostColumns(db);
   migrateInlineImagesToFiles(db, options.uploadsDir);
 
   return db;
